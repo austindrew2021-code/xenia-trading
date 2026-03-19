@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './auth/AuthContext';
 import { useTradingStore } from './store';
-import { usePriceData, TOP_ASSETS, searchPumpTokens, SearchAsset, AssetId } from './hooks/usePriceData';
+import { usePriceData, TOP_ASSETS, searchPumpTokens, SearchAsset, AssetId, INTERVALS } from './hooks/usePriceData';
 import { useBotEngine } from './hooks/useBotEngine';
 import { BotPanel } from './components/BotPanel';
 import { PositionsTable } from './components/PositionsTable';
@@ -21,7 +21,7 @@ type Page = 'home' | 'trade' | 'markets' | 'p2p' | 'earn' | 'discover';
 type SubNav = { tab?: string; rightTab?: string; discoverTab?: string; earnTab?: string };
 
 // ── Asset Selector ──────────────────────────────────────────────────────────
-function AssetSelector({ current, onChange }: { current:string; onChange:(id:string,addr?:string)=>void }) {
+function AssetSelector({ current, onChange }: { current:string; onChange:(id:string,addr?:string,pair?:string)=>void }) {
   const [open, setOpen]       = useState(false);
   const [query, setQuery]     = useState('');
   const [results, setResults] = useState<SearchAsset[]>([]);
@@ -34,7 +34,7 @@ function AssetSelector({ current, onChange }: { current:string; onChange:(id:str
     timer.current = setTimeout(async () => { setSrch(true); setResults(await searchPumpTokens(query)); setSrch(false); }, 400);
   }, [query]);
 
-  const cur = TOP_ASSETS.find((a: typeof TOP_ASSETS[0]) => a.id === current);
+  const cur = (TOP_ASSETS as unknown as any[]).find((a: any) => a.id === current);
 
   return (
     <div className="relative">
@@ -58,7 +58,7 @@ function AssetSelector({ current, onChange }: { current:string; onChange:(id:str
               {!query && (
                 <>
                   <p className="text-[10px] text-[#4B5563] font-semibold uppercase tracking-widest px-3 pt-2.5 pb-1">Top 10 Tokens</p>
-                  {TOP_ASSETS.map((a: typeof TOP_ASSETS[0]) => (
+                  {(TOP_ASSETS as unknown as any[]).map((a: any) => (
                     <button key={a.id} onClick={() => { onChange(a.id); setOpen(false); setQuery(''); }}
                       className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.04] transition-all text-left ${a.id===current?'bg-[#2BFFF1]/05':''}`}>
                       <div className="w-7 h-7 rounded-lg bg-white/[0.05] flex items-center justify-center text-xs font-black text-[#F4F6FA]">{a.id[0].toUpperCase()}</div>
@@ -70,7 +70,7 @@ function AssetSelector({ current, onChange }: { current:string; onChange:(id:str
               )}
               {query && srch && <div className="flex items-center justify-center py-6 gap-2 text-[#4B5563] text-xs"><div className="w-4 h-4 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>Searching…</div>}
               {query && !srch && results.length > 0 && results.map(r => (
-                <button key={r.id} onClick={() => { onChange(r.id,r.address); setOpen(false); setQuery(''); }}
+                <button key={r.id} onClick={() => { onChange(r.id,r.address,r.pairAddress); setOpen(false); setQuery(''); }}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.04] transition-all text-left">
                   <div className="w-7 h-7 rounded-lg bg-[#F59E0B]/10 flex items-center justify-center text-[#F59E0B] text-xs font-black">P</div>
                   <div className="flex-1 min-w-0"><p className="text-sm font-semibold text-[#F4F6FA] truncate">{r.symbol}</p><p className="text-[9px] text-[#4B5563] truncate">{r.address?.slice(0,16)}…</p></div>
@@ -265,8 +265,8 @@ function MobileTrade({ assetId,livePrice,change24h,candles,prices,assetLabel,onC
         </span>
         <span className={`text-xs ${change24h>=0?'text-green-400':'text-red-400'}`}>{change24h>=0?'+':''}{change24h.toFixed(2)}%</span>
         <div className="flex items-center gap-1 ml-auto flex-shrink-0">
-          {['5m','15m','1h','4h'].map(i=>(
-            <button key={i} onClick={()=>setInterval(i)} className={`px-1.5 py-1 rounded text-[10px] font-bold ${interval===i?'bg-white/[0.08] text-[#F4F6FA]':'text-[#4B5563]'}`}>{i}</button>
+          {INTERVALS.map(i=>(
+            <button key={i} onClick={()=>setInterval(i)} className={`px-1.5 py-1 rounded text-[10px] font-bold transition-all ${interval===i?'bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/20':'text-[#4B5563]'}`}>{i}</button>
           ))}
           <LiveMockToggle/>
         </div>
@@ -296,6 +296,7 @@ function MobileTrade({ assetId,livePrice,change24h,candles,prices,assetLabel,onC
 export default function App() {
   const [assetId,    setAssetId]    = useState<AssetId>('sol');
   const [customAddr, setCustomAddr] = useState<string|undefined>();
+  const [customPair, setCustomPair]   = useState<string|undefined>();
   const [interval,   setInterval_]  = useState('15m');
   const [page,       setPage]       = useState<Page>('home');
   const [rightTab,   setRightTab]   = useState<'trade'|'bots'|'board'>('trade');
@@ -305,7 +306,7 @@ export default function App() {
   const [flash,      setFlash]      = useState(false);
   const [favs,       setFavs]       = useState<string[]>([]);
 
-  const {candles,livePrice,loading,change24h,prices,asset} = usePriceData(assetId,interval,customAddr);
+  const {candles,livePrice,loading,change24h,prices,asset} = usePriceData(assetId,interval,customAddr,customPair);
   const {capital,setCapital,resetCapital,positions} = useTradingStore();
   const {user,account,signOut,loading:authLoading} = useAuth();
 
@@ -313,7 +314,7 @@ export default function App() {
   useEffect(()=>{setFlash(true);setTimeout(()=>setFlash(false),300);},[livePrice]);
   useEffect(()=>{if(account)setCapital(account.use_real?account.real_balance:account.mock_balance);},[account,setCapital]);
 
-  const handleChangeAsset = (id:string,addr?:string) => { setAssetId(id); setCustomAddr(addr); setPage('trade'); };
+  const handleChangeAsset = (id:string,addr?:string,pair?:string) => { setAssetId(id); setCustomAddr(addr); setCustomPair(pair); setPage('trade'); };
   const handleNavigate = (p: Page, subNav?: SubNav) => {
     setPage(p);
     if (subNav?.rightTab) setRightTab(subNav.rightTab as any);
@@ -414,8 +415,8 @@ export default function App() {
             <div className="flex items-center gap-3 flex-shrink-0 flex-wrap">
               <AssetSelector current={assetId} onChange={handleChangeAsset}/>
               <div className="flex items-center gap-0.5">
-                {['5m','15m','1h','4h'].map(i=>(
-                  <button key={i} onClick={()=>setInterval_(i)} className={`px-2 py-1 rounded text-[10px] font-semibold transition-all ${interval===i?'bg-white/[0.08] text-[#F4F6FA]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{i}</button>
+                {INTERVALS.map(i=>(
+                  <button key={i} onClick={()=>setInterval_(i)} className={`px-2 py-1 rounded text-[10px] font-semibold transition-all ${interval===i?'bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/20':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{i}</button>
                 ))}
               </div>
               <div className="flex-1"><StatsBar/></div>
