@@ -22,7 +22,25 @@ const KNOWN_TOKENS = [
 const IMG_BY_SYM: Record<string,string> = Object.fromEntries(KNOWN_TOKENS.map(t=>[t.symbol.toUpperCase(),t.img]));
 
 const fmt = (n:number) => { if(!n||n<=0) return '—'; if(n>=1e9) return `$${(n/1e9).toFixed(2)}B`; if(n>=1e6) return `$${(n/1e6).toFixed(2)}M`; if(n>=1e3) return `$${(n/1e3).toFixed(1)}K`; return `$${n.toFixed(2)}`; };
-const fmtP = (p:number) => { if(!p||p<=0) return '$—'; if(p>=1000) return `$${p.toLocaleString('en',{maximumFractionDigits:2})}`; if(p>=1) return `$${p.toFixed(4)}`; if(p>=0.001) return `$${p.toFixed(6)}`; const e=Math.floor(Math.log10(p)); return `$${(p/Math.pow(10,e)).toFixed(2)}e${e}`; };
+// Format price — NEVER uses scientific notation, always human-readable
+const fmtP = (p: number): string => {
+  if (!p || p <= 0) return '$—';
+  if (p >= 1_000_000_000) return `$${(p/1_000_000_000).toFixed(3)}B`;
+  if (p >= 1_000_000)     return `$${(p/1_000_000).toFixed(3)}M`;
+  if (p >= 1_000)         return `$${p.toLocaleString('en',{maximumFractionDigits:2})}`;
+  if (p >= 100)           return `$${p.toFixed(2)}`;
+  if (p >= 10)            return `$${p.toFixed(3)}`;
+  if (p >= 1)             return `$${p.toFixed(4)}`;
+  if (p >= 0.1)           return `$${p.toFixed(5)}`;
+  if (p >= 0.01)          return `$${p.toFixed(6)}`;
+  if (p >= 0.001)         return `$${p.toFixed(7)}`;
+  if (p >= 0.0001)        return `$${p.toFixed(8)}`;
+  if (p >= 0.00001)       return `$${p.toFixed(9)}`;
+  if (p >= 0.000001)      return `$${p.toFixed(10)}`;
+  // For extremely small prices, show leading zeros compactly
+  const s = p.toFixed(12).replace(/0+$/, '');
+  return `$${s}`;
+};
 
 function parsePair(p:any, fallback=''):Token|null {
   if(!p?.baseToken?.symbol||!p?.baseToken?.name) return null;
