@@ -65,19 +65,28 @@ function PostCard({ post, liked, onLike, onFollow, following }: { post:Post; lik
 
 function NewsCard({ item }: { item:NewsItem }) {
   return (
-    <a href={item.url} target="_blank" rel="noopener noreferrer"
-      className="flex gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 hover:border-white/[0.12] transition-all">
-      {item.imageurl && <img src={item.imageurl} alt="" className="w-16 h-16 rounded-xl object-cover flex-shrink-0" onError={e=>{(e.target as HTMLImageElement).style.display='none'}} />}
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-bold text-[#F4F6FA] leading-snug mb-1 line-clamp-2">{item.title}</p>
-        <p className="text-[11px] text-[#6B7280] line-clamp-2 mb-2">{item.body}</p>
-        <div className="flex items-center gap-2 text-[10px] text-[#4B5563]">
-          <span className="font-semibold text-[#2BFFF1]">{item.source}</span>
-          <span>·</span>
-          <span>{new Date(item.published_on*1000).toLocaleDateString()}</span>
+    <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] hover:border-white/[0.12] transition-all overflow-hidden">
+      <div className="flex gap-3 p-4">
+        {item.imageurl && (
+          <img src={item.imageurl} alt="" className="w-16 h-16 rounded-xl object-cover flex-shrink-0"
+            onError={e=>{(e.target as HTMLImageElement).style.display='none'}} />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <a href={item.url} target="_blank" rel="noopener noreferrer"
+              className="text-sm font-bold text-[#F4F6FA] leading-snug line-clamp-2 hover:text-[#2BFFF1] transition-colors flex-1">
+              {item.title}
+            </a>
+            <a href={item.url} target="_blank" rel="noopener noreferrer"
+              className="flex-shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#2BFFF1]/10 text-[#2BFFF1] border border-[#2BFFF1]/20 hover:bg-[#2BFFF1]/20 transition-all whitespace-nowrap">
+              {item.source} ↗
+            </a>
+          </div>
+          <p className="text-[11px] text-[#6B7280] line-clamp-2 mb-2">{item.body}</p>
+          <p className="text-[10px] text-[#374151]">{new Date(item.published_on*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</p>
         </div>
       </div>
-    </a>
+    </div>
   );
 }
 
@@ -124,9 +133,9 @@ function EventCard({ event, registered, onRegister }: { event:Event; registered:
   );
 }
 
-export function DiscoverPage() {
+export function DiscoverPage({ initialTab }: { initialTab?: string }) {
   const { user, account } = useAuth();
-  const [tab,          setTab]          = useState<DiscoverTab>('discover');
+  const [tab,          setTab]          = useState<DiscoverTab>((initialTab as DiscoverTab) ?? 'discover');
   const [posts,        setPosts]        = useState<Post[]>([]);
   const [news,         setNews]         = useState<NewsItem[]>([]);
   const [events,       setEvents]       = useState<Event[]>([]);
@@ -151,13 +160,33 @@ export function DiscoverPage() {
     setLoading(false);
   }, [tab, user, following]);
 
-  // Load news from CryptoCompare
+  // Load news from multiple crypto sources
   const loadNews = useCallback(async () => {
+    setLoading(true);
     try {
-      const r = await fetch('https://min-api.cryptocompare.com/data/v2/news/?categories=Memecoins,Solana,DeFi&lang=EN&limit=20');
-      const d = await r.json();
-      setNews(d.Data ?? []);
+      // Try CryptoCompare first
+      const r = await fetch(
+        'https://min-api.cryptocompare.com/data/v2/news/?categories=Solana,Memecoins,DeFi,Trading&lang=EN&limit=30&sortOrder=latest',
+        { headers: { 'Accept': 'application/json' } }
+      );
+      if (r.ok) {
+        const d = await r.json();
+        if (d.Data && d.Data.length > 0) {
+          setNews(d.Data);
+          setLoading(false);
+          return;
+        }
+      }
+    } catch { /* fall through */ }
+    try {
+      // Fallback: CryptoCompare general crypto news
+      const r2 = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=20');
+      if (r2.ok) {
+        const d2 = await r2.json();
+        setNews(d2.Data ?? []);
+      }
     } catch { setNews([]); }
+    setLoading(false);
   }, []);
 
   // Load events
@@ -181,7 +210,7 @@ export function DiscoverPage() {
   }, [user]);
 
   useEffect(() => {
-    if (tab === 'news') loadNews();
+    if (tab === 'news') { setLoading(true); loadNews(); }
     else if (tab === 'events') loadEvents();
     else loadPosts();
   }, [tab, loadPosts, loadNews, loadEvents]);
@@ -291,9 +320,11 @@ export function DiscoverPage() {
         )}
 
         {tab === 'news' && (
-          news.length === 0
-            ? <div className="flex items-center justify-center py-12 gap-2 text-[#4B5563]"><div className="w-4 h-4 border-2 border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin" /></div>
-            : news.map((n,i) => <NewsCard key={i} item={n} />)
+          loading
+            ? <div className="flex items-center justify-center py-12 gap-2 text-[#4B5563]"><div className="w-4 h-4 border-2 border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin" /><span className="text-sm">Loading news…</span></div>
+            : news.length === 0
+              ? <div className="text-center py-12 text-[#4B5563] text-sm">No news available right now — try refreshing</div>
+              : news.map((n,i) => <NewsCard key={i} item={n} />)
         )}
 
         {tab === 'events' && (
