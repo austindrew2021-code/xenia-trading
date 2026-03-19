@@ -284,10 +284,17 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
     if (!supabase || !user || !newPost.trim()) return;
     setPosting(true);
     const tags = (newPost.match(/#\w+/g) ?? []).map(t => t.slice(1));
-    await supabase.from('community_posts').insert({
-      user_id: user.id, username: account?.username ?? 'Anonymous',
-      content: newPost, tags, likes: 0, comments_count: 0,
+    const { error: postErr } = await supabase.from('community_posts').insert({
+      user_id: user.id,
+      username: account?.username ?? 'Anonymous',
+      content: newPost,
+      tags,
+      likes: 0,
+      comments_count: 0,
+      is_announcement: false,
+      is_admin: false,
     });
+    if (postErr) console.error('Post error:', postErr.message);
     setNewPost('');
     await loadPosts();
     setPosting(false);
