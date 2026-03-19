@@ -37,7 +37,7 @@ function AssetSelector({ current, onChange }: {
     }, 400);
   }, [query]);
 
-  const cur = TOP_ASSETS.find(a => a.id === current);
+  const cur = TOP_ASSETS.find((a: typeof TOP_ASSETS[0]) => a.id === current);
 
   return (
     <div className="relative">
@@ -62,7 +62,7 @@ function AssetSelector({ current, onChange }: {
               {!query && (
                 <>
                   <p className="text-[10px] text-[#4B5563] font-semibold uppercase tracking-widest px-3 pt-2.5 pb-1">Top 10 Tokens</p>
-                  {TOP_ASSETS.map(a => (
+                  {TOP_ASSETS.map((a: typeof TOP_ASSETS[0]) => (
                     <button key={a.id} onClick={() => { onChange(a.id); setOpen(false); setQuery(''); }}
                       className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.04] transition-all text-left ${a.id === current ? 'bg-[#2BFFF1]/05' : ''}`}>
                       <div className="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black bg-white/[0.05] text-[#F4F6FA]">
@@ -331,7 +331,7 @@ function MarketsPanel({ onChange }: { onChange: (id: string, address?: string) =
 
       <p className="text-[10px] text-[#4B5563] font-semibold uppercase tracking-widest mb-2">Top 10 Tokens</p>
       <div className="space-y-1.5 mb-5">
-        {TOP_ASSETS.map(a => (
+        {TOP_ASSETS.map((a: typeof TOP_ASSETS[0]) => (
           <button key={a.id} onClick={() => onChange(a.id)}
             className="w-full flex items-center gap-3 p-3 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12] transition-all text-left">
             <div className="w-9 h-9 rounded-xl bg-white/[0.05] flex items-center justify-center font-black text-[#F4F6FA]">
