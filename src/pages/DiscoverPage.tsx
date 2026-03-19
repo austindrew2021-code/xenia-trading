@@ -161,27 +161,32 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
     setLoading(false);
   }, [tab, user, following]);
 
-  // Load news — multiple sources with fallbacks
+  // Load news — via Supabase Edge Function proxy (server-side, no CORS issues)
   const loadNews = useCallback(async () => {
     setNewsLoading(true);
     setNews([]);
 
-    // Source 1: CryptoCompare general (most reliable, no category filter)
+    const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL
+      || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
+
+    // Primary: Supabase Edge Function proxy (no CORS, server-side fetch)
     try {
-      const r = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=30&sortOrder=latest');
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/crypto-news`);
       if (r.ok) {
         const d = await r.json();
-        if (Array.isArray(d.Data) && d.Data.length > 0) {
-          setNews(d.Data);
+        if (Array.isArray(d.news) && d.news.length > 0) {
+          setNews(d.news);
           setNewsLoading(false);
           return;
         }
       }
-    } catch { /* try next */ }
+    } catch { /* fall through */ }
 
-    // Source 2: CryptoCompare Solana/DeFi categories
+    // Fallback: direct CryptoCompare (works in some environments)
     try {
-      const r2 = await fetch('https://min-api.cryptocompare.com/data/v2/news/?categories=Solana,DeFi&lang=EN&limit=20');
+      const r2 = await fetch(
+        'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=25&sortOrder=latest'
+      );
       if (r2.ok) {
         const d2 = await r2.json();
         if (Array.isArray(d2.Data) && d2.Data.length > 0) {
@@ -190,44 +195,21 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
           return;
         }
       }
-    } catch { /* try next */ }
+    } catch { /* fall through */ }
 
-    // Source 3: CoinTelegraph RSS via rss2json
+    // Fallback: CoinTelegraph via allorigins CORS proxy
     try {
-      const r3 = await fetch('https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fcointelegraph.com%2Frss&count=20');
+      const ct = encodeURIComponent('https://cointelegraph.com/rss');
+      const r3 = await fetch(`https://api.rss2json.com/v1/api.json?rss_url=${ct}&count=20&api_key=`);
       if (r3.ok) {
         const d3 = await r3.json();
         if (Array.isArray(d3.items) && d3.items.length > 0) {
-          const mapped = d3.items.map((item:any) => ({
-            title: item.title,
-            url: item.link,
-            source: 'CoinTelegraph',
-            body: item.description?.replace(/<[^>]*>/g,'').slice(0,200) || '',
-            published_on: Math.floor(new Date(item.pubDate).getTime()/1000),
-            imageurl: item.thumbnail || item.enclosure?.link || '',
-          }));
-          setNews(mapped);
-          setNewsLoading(false);
-          return;
-        }
-      }
-    } catch { /* try next */ }
-
-    // Source 4: Decrypt RSS via rss2json
-    try {
-      const r4 = await fetch('https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fdecrypt.co%2Ffeed&count=20');
-      if (r4.ok) {
-        const d4 = await r4.json();
-        if (Array.isArray(d4.items) && d4.items.length > 0) {
-          const mapped = d4.items.map((item:any) => ({
-            title: item.title,
-            url: item.link,
-            source: 'Decrypt',
-            body: item.description?.replace(/<[^>]*>/g,'').slice(0,200) || '',
+          setNews(d3.items.map((item:any) => ({
+            title: item.title, url: item.link, source: 'CoinTelegraph',
+            body: (item.description||'').replace(/<[^>]*>/g,'').slice(0,220),
             published_on: Math.floor(new Date(item.pubDate).getTime()/1000),
             imageurl: item.thumbnail || '',
-          }));
-          setNews(mapped);
+          })));
           setNewsLoading(false);
           return;
         }
