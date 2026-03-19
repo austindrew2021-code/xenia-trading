@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { useTradingStore } from '../store';
 import { PointsBadge } from '../components/PointsLeaderboard';
@@ -126,6 +126,41 @@ export function HomePage({ onNavigate, onShowWallet, onShowAuth }: Props) {
   const [showAll,       setShowAll]       = useState(false);
   const [favItems,      setFavItems]      = useState<string[]>(DEFAULT_FAVS);
   const [editingFavs,   setEditingFavs]   = useState(false);
+  const [ticker,        setTicker]        = useState<{symbol:string;change:number;price:string}[]>([]);
+  const tickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Fetch top Solana token prices for ticker
+    const load = async () => {
+      try {
+        const addrs = [
+          'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK
+          'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', // WIF
+          '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', // POPCAT
+          'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREkzUo8THF',  // MEW
+          'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82',  // BOME
+          'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',  // JUP
+        ].join(',');
+        const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addrs}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        const seen = new Set<string>();
+        const items: {symbol:string;change:number;price:string}[] = [];
+        for (const p of (d.pairs || [])) {
+          const sym = p.baseToken?.symbol?.toUpperCase();
+          if (!sym || seen.has(sym)) continue;
+          seen.add(sym);
+          const pr = parseFloat(p.priceUsd||'0');
+          const prStr = pr >= 1 ? `$${pr.toFixed(4)}` : pr >= 0.001 ? `$${pr.toFixed(6)}` : `$${pr.toFixed(9)}`;
+          items.push({ symbol:sym, change:parseFloat(p.priceChange?.h24||'0'), price:prStr });
+        }
+        if (items.length > 0) setTicker(items);
+      } catch {}
+    };
+    load();
+    const iv = setInterval(load, 30_000);
+    return () => clearInterval(iv);
+  }, []);
 
   const openPnl = positions.filter(p=>p.status==='open').reduce((s,p)=>s+p.pnl,0);
   const dispCap = account ? (account.use_real ? account.real_balance : account.mock_balance) : capital;
@@ -143,6 +178,55 @@ export function HomePage({ onNavigate, onShowWallet, onShowAuth }: Props) {
 
   return (
     <div className="overflow-y-auto h-full pb-24 md:pb-4">
+
+      {/* ── Cyberpunk header ───────────────────────────────── */}
+      <div className="relative overflow-hidden flex flex-col items-center pt-6 pb-3 px-4"
+        style={{background:'linear-gradient(180deg,#030608 0%,transparent 100%)'}}>
+        {/* Neon grid lines */}
+        <div className="absolute inset-0 pointer-events-none opacity-15" style={{
+          backgroundImage:'linear-gradient(rgba(43,255,241,0.15) 1px,transparent 1px),linear-gradient(90deg,rgba(43,255,241,0.15) 1px,transparent 1px)',
+          backgroundSize:'40px 40px',
+        }}/>
+        {/* Glow orbs */}
+        <div className="absolute -top-8 left-1/2 -translate-x-1/2 w-64 h-32 rounded-full opacity-20 pointer-events-none" style={{background:'radial-gradient(ellipse,#2BFFF1,transparent 70%)'}}/>
+        
+        {/* XENIA text */}
+        <div className="relative z-10 text-center mb-1">
+          <h1 className="font-black tracking-[0.3em] text-4xl sm:text-5xl uppercase select-none"
+            style={{
+              color:'transparent',
+              backgroundImage:'linear-gradient(180deg,#ffffff 0%,#2BFFF1 50%,#00a8ff 100%)',
+              WebkitBackgroundClip:'text',
+              backgroundClip:'text',
+              textShadow:'0 0 40px rgba(43,255,241,0.4)',
+              filter:'drop-shadow(0 0 12px rgba(43,255,241,0.6))',
+            }}>
+            XENIA
+          </h1>
+          <p className="text-[10px] tracking-[0.5em] text-[#2BFFF1]/50 uppercase font-semibold mt-0.5">
+            TRADING PLATFORM
+          </p>
+        </div>
+
+        {/* Ticker bar */}
+        <div className="relative z-10 w-full mt-3 overflow-hidden h-7 rounded-lg border border-[#2BFFF1]/10 bg-black/30">
+          <div ref={tickerRef} className="flex items-center h-full gap-6 px-4 whitespace-nowrap"
+            style={{animation: ticker.length > 0 ? 'ticker-scroll 30s linear infinite' : 'none'}}>
+            {[...ticker, ...ticker].map((t, i) => (
+              <span key={i} className="flex items-center gap-1.5 text-[11px] font-semibold flex-shrink-0">
+                <span className="text-[#A7B0B7]">{t.symbol}</span>
+                <span className="text-[#6B7280]">{t.price}</span>
+                <span className={`font-bold ${t.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {t.change >= 0 ? '▲' : '▼'} {Math.abs(t.change).toFixed(2)}%
+                </span>
+              </span>
+            ))}
+            {ticker.length === 0 && (
+              <span className="text-[11px] text-[#374151] font-mono">Loading market data…</span>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* ── Balance hero card ──────────────────────────────── */}
       <div className="mx-4 mt-4 rounded-2xl overflow-hidden relative"
