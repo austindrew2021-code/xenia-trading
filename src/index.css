@@ -20,3 +20,15 @@ body {
 .green-text { color: #4ADE80; }
 .red-text { color: #F87171; }
 .cyan-text { color: #2BFFF1; }
+
+/* ── Ticker scroll animation ─────────────────────────────────────────── */
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ── Cyberpunk scan line effect ──────────────────────────────────────── */
+@keyframes scanline {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
