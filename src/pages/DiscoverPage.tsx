@@ -145,6 +145,7 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
   const [newPost,      setNewPost]      = useState('');
   const [posting,      setPosting]      = useState(false);
   const [loading,      setLoading]      = useState(true);
+  const [newsLoading,  setNewsLoading]  = useState(true);
 
   // Load posts
   const loadPosts = useCallback(async () => {
@@ -160,33 +161,80 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
     setLoading(false);
   }, [tab, user, following]);
 
-  // Load news from multiple crypto sources
+  // Load news — multiple sources with fallbacks
   const loadNews = useCallback(async () => {
-    setLoading(true);
+    setNewsLoading(true);
+    setNews([]);
+
+    // Source 1: CryptoCompare general (most reliable, no category filter)
     try {
-      // Try CryptoCompare first
-      const r = await fetch(
-        'https://min-api.cryptocompare.com/data/v2/news/?categories=Solana,Memecoins,DeFi,Trading&lang=EN&limit=30&sortOrder=latest',
-        { headers: { 'Accept': 'application/json' } }
-      );
+      const r = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=30&sortOrder=latest');
       if (r.ok) {
         const d = await r.json();
-        if (d.Data && d.Data.length > 0) {
+        if (Array.isArray(d.Data) && d.Data.length > 0) {
           setNews(d.Data);
-          setLoading(false);
+          setNewsLoading(false);
           return;
         }
       }
-    } catch { /* fall through */ }
+    } catch { /* try next */ }
+
+    // Source 2: CryptoCompare Solana/DeFi categories
     try {
-      // Fallback: CryptoCompare general crypto news
-      const r2 = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&limit=20');
+      const r2 = await fetch('https://min-api.cryptocompare.com/data/v2/news/?categories=Solana,DeFi&lang=EN&limit=20');
       if (r2.ok) {
         const d2 = await r2.json();
-        setNews(d2.Data ?? []);
+        if (Array.isArray(d2.Data) && d2.Data.length > 0) {
+          setNews(d2.Data);
+          setNewsLoading(false);
+          return;
+        }
       }
-    } catch { setNews([]); }
-    setLoading(false);
+    } catch { /* try next */ }
+
+    // Source 3: CoinTelegraph RSS via rss2json
+    try {
+      const r3 = await fetch('https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fcointelegraph.com%2Frss&count=20');
+      if (r3.ok) {
+        const d3 = await r3.json();
+        if (Array.isArray(d3.items) && d3.items.length > 0) {
+          const mapped = d3.items.map((item:any) => ({
+            title: item.title,
+            url: item.link,
+            source: 'CoinTelegraph',
+            body: item.description?.replace(/<[^>]*>/g,'').slice(0,200) || '',
+            published_on: Math.floor(new Date(item.pubDate).getTime()/1000),
+            imageurl: item.thumbnail || item.enclosure?.link || '',
+          }));
+          setNews(mapped);
+          setNewsLoading(false);
+          return;
+        }
+      }
+    } catch { /* try next */ }
+
+    // Source 4: Decrypt RSS via rss2json
+    try {
+      const r4 = await fetch('https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Fdecrypt.co%2Ffeed&count=20');
+      if (r4.ok) {
+        const d4 = await r4.json();
+        if (Array.isArray(d4.items) && d4.items.length > 0) {
+          const mapped = d4.items.map((item:any) => ({
+            title: item.title,
+            url: item.link,
+            source: 'Decrypt',
+            body: item.description?.replace(/<[^>]*>/g,'').slice(0,200) || '',
+            published_on: Math.floor(new Date(item.pubDate).getTime()/1000),
+            imageurl: item.thumbnail || '',
+          }));
+          setNews(mapped);
+          setNewsLoading(false);
+          return;
+        }
+      }
+    } catch { /* all failed */ }
+
+    setNewsLoading(false);
   }, []);
 
   // Load events
@@ -210,7 +258,7 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
   }, [user]);
 
   useEffect(() => {
-    if (tab === 'news') { setLoading(true); loadNews(); }
+    if (tab === 'news') { loadNews(); }
     else if (tab === 'events') loadEvents();
     else loadPosts();
   }, [tab, loadPosts, loadNews, loadEvents]);
@@ -320,10 +368,20 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
         )}
 
         {tab === 'news' && (
-          loading
-            ? <div className="flex items-center justify-center py-12 gap-2 text-[#4B5563]"><div className="w-4 h-4 border-2 border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin" /><span className="text-sm">Loading news…</span></div>
+          newsLoading
+            ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#4B5563]">
+                <div className="w-8 h-8 border-2 border-[#2BFFF1]/20 border-t-[#2BFFF1] rounded-full animate-spin"/>
+                <span className="text-sm">Loading crypto news…</span>
+              </div>
+            )
             : news.length === 0
-              ? <div className="text-center py-12 text-[#4B5563] text-sm">No news available right now — try refreshing</div>
+              ? (
+                <div className="text-center py-16 text-[#4B5563]">
+                  <p className="text-base mb-2">📰</p>
+                  <p className="text-sm">Could not load news. Check your connection.</p>
+                </div>
+              )
               : news.map((n,i) => <NewsCard key={i} item={n} />)
         )}
 
