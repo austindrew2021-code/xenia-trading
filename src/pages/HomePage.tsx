@@ -251,16 +251,20 @@ export function HomePage({ onNavigate, onShowWallet, onShowAuth }: Props) {
         </div>
         <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] overflow-hidden">
           {[
-            {symbol:'SOL', change:'+4.21%',price:'$145.20',up:true},
-            {symbol:'BONK',change:'-2.14%',price:'$0.0000187',up:false},
-            {symbol:'WIF', change:'+8.33%',price:'$1.84',up:true},
-            {symbol:'POPCAT',change:'+1.02%',price:'$0.742',up:true},
+            {symbol:'SOL',   name:'Solana',        img:'https://assets.coingecko.com/coins/images/4128/small/solana.png',    change:'+4.21%', price:'$145.20',    up:true},
+            {symbol:'BONK',  name:'Bonk',           img:'https://assets.coingecko.com/coins/images/28600/small/bonk.jpg',    change:'-2.14%', price:'$0.0000187', up:false},
+            {symbol:'WIF',   name:'dogwifhat',      img:'https://assets.coingecko.com/coins/images/33566/small/wif.png',     change:'+8.33%', price:'$1.84',      up:true},
+            {symbol:'POPCAT',name:'Popcat',         img:'https://assets.coingecko.com/coins/images/39580/small/popcat.png',  change:'+1.02%', price:'$0.742',     up:true},
           ].map((t,i)=>(
             <button key={t.symbol} onClick={()=>onNavigate('markets')}
               className={`w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.025] transition-all text-left ${i>0?'border-t border-white/[0.04]':''}`}>
               <div className="flex items-center gap-2.5">
-                <div className="w-7 h-7 rounded-lg bg-[#2BFFF1]/10 flex items-center justify-center text-xs font-black text-[#2BFFF1]">{t.symbol[0]}</div>
-                <span className="text-sm font-semibold text-[#F4F6FA]">{t.symbol}</span>
+                <img src={t.img} alt={t.symbol} className="w-8 h-8 rounded-full object-cover"
+                  onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
+                <div>
+                  <p className="text-sm font-semibold text-[#F4F6FA]">{t.symbol}</p>
+                  <p className="text-[9px] text-[#374151]">{t.name}</p>
+                </div>
               </div>
               <div className="text-right">
                 <p className="text-sm font-semibold text-[#F4F6FA]">{t.price}</p>
