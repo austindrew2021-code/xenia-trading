@@ -8,7 +8,7 @@ import { PositionsTable } from './components/PositionsTable';
 import { PriceChart } from './components/PriceChart';
 import { AuthModal } from './components/AuthModal';
 import { WalletDepositModal } from './components/WalletDepositModal';
-import { PointsBadge } from './components/PointsLeaderboard';
+import { PointsBadge, PointsLeaderboard } from './components/PointsLeaderboard';
 import { MarketsPage } from './pages/MarketsPage';
 import { DiscoverPage } from './pages/DiscoverPage';
 import { P2PPage } from './pages/P2PPage';
@@ -18,6 +18,7 @@ import { calcRSI, calcStochastic, calcATR } from './bots/indicators';
 import { Side } from './types';
 
 type Page = 'home' | 'trade' | 'markets' | 'p2p' | 'earn' | 'discover';
+type SubNav = { tab?: string; rightTab?: string; discoverTab?: string; earnTab?: string };
 
 // ── Asset Selector ──────────────────────────────────────────────────────────
 function AssetSelector({ current, onChange }: { current:string; onChange:(id:string,addr?:string)=>void }) {
@@ -270,6 +271,7 @@ export default function App() {
   const [interval,   setInterval_]  = useState('15m');
   const [page,       setPage]       = useState<Page>('home');
   const [rightTab,   setRightTab]   = useState<'trade'|'bots'|'board'>('trade');
+  const [discoverTab,setDiscoverTab] = useState<string>('discover');
   const [showAuth,   setShowAuth]   = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [flash,      setFlash]      = useState(false);
@@ -284,6 +286,11 @@ export default function App() {
   useEffect(()=>{if(account)setCapital(account.use_real?account.real_balance:account.mock_balance);},[account,setCapital]);
 
   const handleChangeAsset = (id:string,addr?:string) => { setAssetId(id); setCustomAddr(addr); setPage('trade'); };
+  const handleNavigate = (p: Page, subNav?: SubNav) => {
+    setPage(p);
+    if (subNav?.rightTab) setRightTab(subNav.rightTab as any);
+    if (subNav?.discoverTab) setDiscoverTab(subNav.discoverTab);
+  };
   const toggleFav = (addr:string) => setFavs(prev=>prev.includes(addr)?prev.filter(a=>a!==addr):[...prev,addr]);
 
   const dispCap = account?(account.use_real?account.real_balance:account.mock_balance):capital;
@@ -358,20 +365,20 @@ export default function App() {
 
       {/* ── Mobile layout ── */}
       <div className="flex-1 overflow-hidden md:hidden">
-        {page==='home'&&<HomePage onNavigate={(p)=>setPage(p as Page)} onShowWallet={()=>setShowWallet(true)} onShowAuth={()=>setShowAuth(true)}/>}
+        {page==='home'&&<HomePage onNavigate={handleNavigate} onShowWallet={()=>setShowWallet(true)} onShowAuth={()=>setShowAuth(true)}/>}
         {page==='trade'&&<MobileTrade assetId={assetId} livePrice={livePrice} change24h={change24h} candles={candles} prices={prices} assetLabel={asset.label} onChangeAsset={handleChangeAsset} interval={interval} setInterval={setInterval_}/>}
         {page==='markets'&&<MarketsPage onTrade={handleChangeAsset} favourites={favs} onToggleFav={toggleFav}/>}
         {page==='p2p'&&<div className="overflow-y-auto h-full pb-16"><P2PPage/></div>}
         {page==='earn'&&<div className="overflow-y-auto h-full pb-16"><EarnPage/></div>}
-        {page==='discover'&&<DiscoverPage/>}
+        {page==='discover'&&<DiscoverPage initialTab={discoverTab}/>}
       </div>
 
       {/* ── Desktop layout ── */}
       <div className="hidden md:flex flex-1 overflow-hidden flex-col">
-        {page==='home'&&<div className="flex-1 overflow-y-auto"><HomePage onNavigate={(p)=>setPage(p as Page)} onShowWallet={()=>setShowWallet(true)} onShowAuth={()=>setShowAuth(true)}/></div>}
+        {page==='home'&&<div className="flex-1 overflow-y-auto"><HomePage onNavigate={handleNavigate} onShowWallet={()=>setShowWallet(true)} onShowAuth={()=>setShowAuth(true)}/></div>}
         {page==='p2p'&&<div className="flex-1 overflow-y-auto"><P2PPage/></div>}
         {page==='earn'&&<div className="flex-1 overflow-y-auto"><EarnPage/></div>}
-        {page==='discover'&&<div className="flex-1 overflow-hidden"><DiscoverPage/></div>}
+        {page==='discover'&&<div className="flex-1 overflow-hidden"><DiscoverPage initialTab={discoverTab}/></div>}
         {page==='markets'&&<div className="flex-1 overflow-hidden"><MarketsPage onTrade={handleChangeAsset} favourites={favs} onToggleFav={toggleFav}/></div>}
         {page==='trade'&&(
           <div className="flex flex-col flex-1 overflow-hidden px-4 pt-3 pb-3 gap-3">
@@ -399,12 +406,13 @@ export default function App() {
               </div>
               <div className="flex flex-col gap-3 overflow-hidden">
                 <div className="flex rounded-xl border border-white/[0.07] overflow-hidden flex-shrink-0">
-                  {([['trade','Trade'],['bots','Bots']] as const).map(([t,l])=>(
-                    <button key={t} onClick={()=>setRightTab(t)} className={`flex-1 py-2 text-xs font-semibold transition-all ${rightTab===t?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{l}</button>
+                  {([['trade','Trade'],['bots','Bots'],['board','Rankings']] as const).map(([t,l])=>(
+                    <button key={t} onClick={()=>setRightTab(t as any)} className={`flex-1 py-2 text-[10px] font-semibold transition-all ${rightTab===t?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{l}</button>
                   ))}
                 </div>
                 {rightTab==='trade'?<><TradeForm livePrice={livePrice} asset={asset.label}/><IndicatorsPanel prices={prices}/><div className="flex-1 overflow-hidden min-h-0"><ActivityLog/></div></>
-                :<div className="flex-1 overflow-y-auto"><BotPanel/></div>}
+                :rightTab==='bots'?<div className="flex-1 overflow-y-auto"><BotPanel/></div>
+                :<div className="flex-1 overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4"><PointsLeaderboard/></div>}
               </div>
             </div>
           </div>
