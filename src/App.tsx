@@ -204,31 +204,57 @@ function ActivityLog() {
   );
 }
 
-// ── Mobile nav ──────────────────────────────────────────────────────────────
+// ── Mobile nav — custom SVG icons ──────────────────────────────────────────
+const NAV_ICONS: Record<Page, (active:boolean)=>React.ReactNode> = {
+  home:     (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
+  trade:    (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+  markets:  (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+  discover: (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>,
+  earn:     (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
+  p2p:      (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>,
+};
+
 function MobileNav({ page, setPage }: { page:Page; setPage:(p:Page)=>void }) {
-  const items: {id:Page;label:string;icon:string}[] = [
-    {id:'home',    label:'Home',    icon:'🏠'},
-    {id:'trade',   label:'Trade',  icon:'📊'},
-    {id:'markets', label:'Markets',icon:'🔍'},
-    {id:'discover',label:'Discover',icon:'🌐'},
-    {id:'earn',    label:'Earn',   icon:'💎'},
+  const items: {id:Page;label:string}[] = [
+    {id:'home',    label:'Home'},
+    {id:'trade',   label:'Trade'},
+    {id:'markets', label:'Markets'},
+    {id:'discover',label:'Discover'},
+    {id:'earn',    label:'Earn'},
   ];
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#0B0E14]/95 backdrop-blur-sm border-t border-white/[0.06] flex md:hidden">
-      {items.map(item=>(
-        <button key={item.id} onClick={()=>setPage(item.id)}
-          className={`flex-1 flex flex-col items-center gap-1 py-3 transition-all ${page===item.id?'text-[#2BFFF1]':'text-[#374151]'}`}>
-          <span className="text-lg leading-none">{item.icon}</span>
-          <span className="text-[9px] font-semibold">{item.label}</span>
-        </button>
-      ))}
+    <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#0B0E14]/96 backdrop-blur-sm border-t border-white/[0.06] flex md:hidden">
+      {items.map(item=>{
+        const active = page===item.id;
+        return (
+          <button key={item.id} onClick={()=>setPage(item.id)}
+            className={`flex-1 flex flex-col items-center gap-1 py-3 transition-all ${active?'text-[#2BFFF1]':'text-[#374151]'}`}>
+            {NAV_ICONS[item.id]?.(active)}
+            <span className="text-[9px] font-semibold">{item.label}</span>
+          </button>
+        );
+      })}
     </div>
+  );
+}
+
+// ── Live/Mock toggle component ─────────────────────────────────────────────
+function LiveMockToggle() {
+  const { account, saveAccount } = useAuth();
+  if (!account) return null;
+  const toggle = () => saveAccount({ use_real: !account.use_real } as any);
+  return (
+    <button onClick={toggle}
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${account.use_real ? 'border-[#2BFFF1]/40 bg-[#2BFFF1]/10 text-[#2BFFF1]' : 'border-white/[0.08] bg-white/[0.02] text-[#4B5563] hover:text-[#A7B0B7]'}`}>
+      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${account.use_real ? 'bg-[#2BFFF1] shadow-[0_0_6px_#2BFFF1]' : 'bg-[#374151]'}`}/>
+      {account.use_real ? 'LIVE' : 'MOCK'}
+    </button>
   );
 }
 
 // ── Mobile Trade ────────────────────────────────────────────────────────────
 function MobileTrade({ assetId,livePrice,change24h,candles,prices,assetLabel,onChangeAsset,interval,setInterval }:any) {
-  const [tab,setTab] = useState<'chart'|'trade'|'bots'>('chart');
+  const [tab,setTab] = useState<'chart'|'trade'|'bots'|'board'>('chart');
   const {positions} = useTradingStore();
   return (
     <div className="flex flex-col h-full pb-16">
@@ -245,8 +271,8 @@ function MobileTrade({ assetId,livePrice,change24h,candles,prices,assetLabel,onC
         </div>
       </div>
       <div className="flex border-b border-white/[0.06] flex-shrink-0">
-        {([['chart','Chart'],['trade','Trade'],['bots','Bots']] as const).map(([t,l])=>(
-          <button key={t} onClick={()=>setTab(t)} className={`flex-1 py-2.5 text-xs font-semibold transition-all ${tab===t?'text-[#2BFFF1] border-b-2 border-[#2BFFF1]':'text-[#4B5563]'}`}>{l}</button>
+        {([['chart','Chart'],['trade','Trade'],['bots','Bots'],['board','Rankings']] as const).map(([t,l])=>(
+          <button key={t} onClick={()=>setTab(t as any)} className={`flex-1 py-2 text-[10px] font-semibold transition-all ${tab===t?'text-[#2BFFF1] border-b-2 border-[#2BFFF1]':'text-[#4B5563]'}`}>{l}</button>
         ))}
       </div>
       <div className="flex-1 overflow-hidden">
@@ -259,6 +285,7 @@ function MobileTrade({ assetId,livePrice,change24h,candles,prices,assetLabel,onC
         )}
         {tab==='trade'&&<div className="overflow-y-auto h-full p-3 space-y-3"><TradeForm livePrice={livePrice} asset={assetLabel}/><IndicatorsPanel prices={prices}/></div>}
         {tab==='bots'&&<div className="overflow-y-auto h-full p-3 space-y-3"><BotPanel/><ActivityLog/></div>}
+        {tab==='board'&&<div className="overflow-y-auto h-full p-4"><PointsLeaderboard/></div>}
       </div>
     </div>
   );
@@ -341,6 +368,7 @@ export default function App() {
           )}
 
           <div className="ml-auto flex items-center gap-2">
+            <LiveMockToggle/>
             <PointsBadge/>
             {user ? (
               <>
