@@ -57,6 +57,70 @@ function deriveAddresses(userId: string): Record<string, string> {
 
 interface Props { onClose: () => void; }
 
+// ── Auto-scan button — checks for recent transactions to deposit address ──
+function ScanButton({ asset, address, onFound }: {
+  asset: string;
+  address: string;
+  onFound: (amount: number, txHash: string) => void;
+}) {
+  const [scanning, setScanning] = useState(false);
+  const [msg,      setMsg]      = useState('');
+
+  const scan = async () => {
+    if (!address || address === '—') return;
+    setScanning(true);
+    setMsg('Scanning…');
+    try {
+      // Use Solscan public API for SOL/SPL transactions
+      if (asset === 'SOL' || asset === 'USDC' || asset === 'USDT') {
+        const r = await fetch(
+          `https://public-api.solscan.io/account/transactions?account=${address}&limit=5`,
+          { headers: { Accept: 'application/json' } }
+        );
+        if (r.ok) {
+          const txs: any[] = await r.json();
+          if (txs.length > 0) {
+            const tx = txs[0];
+            const sig = tx.txHash || tx.signature || '';
+            const lamports = Math.abs(tx.lamport || tx.fee || 0);
+            const sol = lamports / 1e9;
+            const usd = sol * 150; // rough SOL price
+            if (sig) {
+              setMsg(`Found tx: ${sig.slice(0,8)}…`);
+              onFound(parseFloat(usd.toFixed(2)), sig);
+              setScanning(false);
+              return;
+            }
+          }
+          setMsg('No recent transactions found');
+        } else {
+          setMsg('Scan unavailable — paste tx manually');
+        }
+      } else {
+        setMsg('Paste your tx hash manually for EVM/BTC');
+      }
+    } catch {
+      setMsg('Scan failed — paste tx manually');
+    }
+    setScanning(false);
+    setTimeout(() => setMsg(''), 4000);
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      {msg && <span className="text-[10px] text-[#6B7280]">{msg}</span>}
+      <button onClick={scan} disabled={scanning || !address || address==='—'}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border border-[#2BFFF1]/25 text-[#2BFFF1] hover:bg-[#2BFFF1]/10 transition-all disabled:opacity-40">
+        {scanning ? (
+          <><div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/> Scanning…</>
+        ) : (
+          <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg> Auto-scan</>
+        )}
+      </button>
+    </div>
+  );
+}
+
 export function WalletDepositModal({ onClose }: Props) {
   const { user, account, saveAccount, addDeposit, connectWallet } = useAuth();
   const [tab,        setTab]        = useState<'deposit'|'withdraw'|'wallet'>('deposit');
@@ -271,15 +335,22 @@ export function WalletDepositModal({ onClose }: Props) {
                   )}
                   <p className="text-[9px] text-[#374151] mt-1">This address is unique to your account. Only send {asset} to this address.</p>
                 </div>
-                <div>
-                  <label className="text-[10px] text-[#6B7280] mb-1 block">USD value of deposit</label>
-                  <input type="number" placeholder="e.g. 100" value={amount} onChange={e => setAmount(e.target.value)}
-                    className="w-full bg-[#05060B] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40"/>
-                </div>
-                <div>
-                  <label className="text-[10px] text-[#6B7280] mb-1 block">Transaction Hash / Signature</label>
-                  <input placeholder="Paste tx hash after sending" value={txHash} onChange={e => setTxHash(e.target.value)}
-                    className="w-full bg-[#05060B] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40 font-mono text-xs"/>
+                {/* Auto-scan or manual TX hash */}
+                <div className="rounded-xl border border-white/[0.07] bg-[#05060B] p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-[#6B7280] font-semibold uppercase tracking-wide">Confirm Deposit</p>
+                    <ScanButton asset={asset} address={addr} onFound={(amt, hash) => { setAmount(String(amt)); setTxHash(hash); }}/>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-[#4B5563] mb-1 block">Amount (USD)</label>
+                    <input type="number" placeholder="Auto-filled after scan" value={amount} onChange={e => setAmount(e.target.value)}
+                      className="w-full bg-[#0B0E14] border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40"/>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-[#4B5563] mb-1 block">Transaction Signature</label>
+                    <input placeholder="Auto-filled after scan, or paste manually" value={txHash} onChange={e => setTxHash(e.target.value)}
+                      className="w-full bg-[#0B0E14] border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40 font-mono text-[11px]"/>
+                  </div>
                 </div>
                 <button onClick={submitDeposit} disabled={submitting || !amount || !txHash}
                   className="w-full py-3 rounded-xl font-bold text-sm bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
