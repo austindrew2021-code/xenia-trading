@@ -39,6 +39,7 @@ export interface TradingAccount {
   stats:         AccountStats;
   monthly_points: Record<string, MonthPoints>;
   deposits:      DepositRecord[];
+  deposit_wallets: Record<string,string>;
 }
 
 interface AuthCtx {
