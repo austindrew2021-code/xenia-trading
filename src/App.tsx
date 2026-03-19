@@ -5,7 +5,7 @@ import { usePriceData, TOP_ASSETS, searchPumpTokens, SearchAsset, AssetId } from
 import { useBotEngine } from './hooks/useBotEngine';
 import { BotPanel } from './components/BotPanel';
 import { PositionsTable } from './components/PositionsTable';
-import { PriceChart } from './components/PriceChart';
+import { PriceChart, formatPrice } from './components/PriceChart';
 import { AuthModal } from './components/AuthModal';
 import { WalletDepositModal } from './components/WalletDepositModal';
 import { PointsBadge, PointsLeaderboard } from './components/PointsLeaderboard';
@@ -245,7 +245,7 @@ function LiveMockToggle() {
   const toggle = () => saveAccount({ use_real: !account.use_real } as any);
   return (
     <button onClick={toggle}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${account.use_real ? 'border-[#2BFFF1]/40 bg-[#2BFFF1]/10 text-[#2BFFF1]' : 'border-white/[0.08] bg-white/[0.02] text-[#4B5563] hover:text-[#A7B0B7]'}`}>
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-black transition-all ${account.use_real ? 'border-[#2BFFF1]/50 bg-[#2BFFF1]/15 text-[#2BFFF1]' : 'border-white/[0.12] bg-white/[0.04] text-[#6B7280] hover:text-[#A7B0B7] hover:border-white/25'}`}>
       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${account.use_real ? 'bg-[#2BFFF1] shadow-[0_0_6px_#2BFFF1]' : 'bg-[#374151]'}`}/>
       {account.use_real ? 'LIVE' : 'MOCK'}
     </button>
@@ -260,14 +260,15 @@ function MobileTrade({ assetId,livePrice,change24h,candles,prices,assetLabel,onC
     <div className="flex flex-col h-full pb-16">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06] flex-shrink-0 overflow-x-auto">
         <AssetSelector current={assetId} onChange={onChangeAsset}/>
-        <span className={`text-sm font-bold ml-1 ${change24h>=0?'text-green-400':'text-red-400'}`}>
-          ${livePrice>0?livePrice.toFixed(livePrice<1?6:4):'—'}
+        <span className={`text-sm font-bold ml-1 font-mono ${change24h>=0?'text-green-400':'text-red-400'}`}>
+          {livePrice>0?formatPrice(livePrice):'—'}
         </span>
         <span className={`text-xs ${change24h>=0?'text-green-400':'text-red-400'}`}>{change24h>=0?'+':''}{change24h.toFixed(2)}%</span>
-        <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
+        <div className="flex items-center gap-1 ml-auto flex-shrink-0">
           {['5m','15m','1h','4h'].map(i=>(
             <button key={i} onClick={()=>setInterval(i)} className={`px-1.5 py-1 rounded text-[10px] font-bold ${interval===i?'bg-white/[0.08] text-[#F4F6FA]':'text-[#4B5563]'}`}>{i}</button>
           ))}
+          <LiveMockToggle/>
         </div>
       </div>
       <div className="flex border-b border-white/[0.06] flex-shrink-0">
@@ -360,8 +361,8 @@ export default function App() {
           {/* Live price on trade page */}
           {page==='trade'&&(
             <div className="hidden md:flex items-center gap-2 ml-2">
-              <span className={`text-base font-bold transition-colors ${flash?'text-[#2BFFF1]':'text-[#F4F6FA]'}`}>
-                ${livePrice>0?livePrice.toFixed(livePrice<1?6:2):'—'}
+              <span className={`text-base font-bold transition-colors font-mono ${flash?'text-[#2BFFF1]':'text-[#F4F6FA]'}`}>
+                {livePrice>0?formatPrice(livePrice):'—'}
               </span>
               <span className={`text-xs font-semibold ${change24h>=0?'text-green-400':'text-red-400'}`}>{change24h>=0?'+':''}{change24h.toFixed(2)}%</span>
             </div>
