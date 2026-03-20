@@ -16,6 +16,8 @@ import { EarnPage } from './pages/EarnPage';
 import { HomePage } from './pages/HomePage';
 import { calcRSI, calcStochastic, calcATR } from './bots/indicators';
 import { Side } from './types';
+import { TouchGrassModal, TouchGrassActive, useTouchGrass } from './components/TouchGrassMode';
+import { PnlShareCard } from './components/PnlShareCard';
 
 type Page = 'home' | 'trade' | 'markets' | 'p2p' | 'earn' | 'discover';
 type SubNav = { tab?: string; rightTab?: string; discoverTab?: string; earnTab?: string };
@@ -304,6 +306,8 @@ export default function App() {
   const [showAuth,   setShowAuth]   = useState(false);
   const [showWallet, setShowWallet] = useState(false);
   const [flash,      setFlash]      = useState(false);
+  const [showPnlShare, setShowPnlShare] = useState(false);
+  const { showModal: showTG, grassActive, handleActivate: tgActivate, handleSkip: tgSkip, handleDeactivate: tgDeactivate } = useTouchGrass();
   const [favs,       setFavs]       = useState<string[]>([]);
 
   const {candles,livePrice,loading,change24h,prices,asset} = usePriceData(assetId,interval,customAddr,customPair);
@@ -374,6 +378,12 @@ export default function App() {
             <PointsBadge/>
             {user ? (
               <>
+                <button onClick={()=>setShowPnlShare(true)}
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-white/20 transition-all text-[10px] text-[#4B5563] hover:text-[#A7B0B7]"
+                  title="Share P&L">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+                  P&L
+                </button>
                 <button onClick={()=>setShowWallet(true)}
                   className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-white/20 transition-all">
                   <span className="text-xs text-[#A7B0B7]">{account?.username??user.email?.split('@')[0]}</span>
@@ -388,7 +398,7 @@ export default function App() {
                 Sign In
               </button>
             )}
-            <button onClick={resetCapital} className="hidden sm:block text-xs px-2 py-1.5 rounded-xl border border-red-500/20 text-red-400/60 hover:bg-red-500/10 transition-all">↺</button>
+
           </div>
         </div>
       </div>
@@ -422,6 +432,7 @@ export default function App() {
               <div className="flex-1"><StatsBar/></div>
             </div>
 
+            {grassActive && <TouchGrassActive onDeactivate={tgDeactivate}/>}
             <div className="grid grid-cols-[240px_1fr_260px] gap-3 flex-1 min-h-0">
               <div className="overflow-y-auto"><BotPanel/></div>
               <div className="flex flex-col gap-3 min-w-0 overflow-hidden">
@@ -452,6 +463,8 @@ export default function App() {
       <MobileNav page={page} setPage={setPage}/>
       {showAuth&&<AuthModal onClose={()=>setShowAuth(false)}/>}
       {showWallet&&<WalletDepositModal onClose={()=>setShowWallet(false)}/>}
+      {showPnlShare&&<PnlShareCard onClose={()=>setShowPnlShare(false)}/>}
+      <TouchGrassModal show={showTG} onClose={tgSkip} onActivate={tgActivate}/>
     </div>
   );
 }
