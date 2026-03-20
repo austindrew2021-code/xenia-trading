@@ -56,7 +56,8 @@ export function useBotEngine({ prices, livePrice, asset }: Props) {
             partialFlags.current.add(pos.id);
             addLog(`📤 Partial bot2 ${pos.asset} 50% @ $${livePrice.toFixed(4)}`);
           }
-          const { exit, reason } = bot2ShouldExit(pos.entryPrice, livePrice, peakPrices.current[pos.id] || pos.entryPrice, pos.side, prices, botConfigs.bot2);
+          const _lb = botConfigs.bot2.lookback ?? 80;
+const { exit, reason } = bot2ShouldExit(pos.entryPrice, livePrice, peakPrices.current[pos.id] || pos.entryPrice, pos.side, prices.slice(-_lb), botConfigs.bot2);
           if (exit) { closePosition(pos.id, livePrice); addLog(`🔚 Bot2 exit ${pos.asset} — ${reason}`); delete peakPrices.current[pos.id]; partialFlags.current.delete(pos.id); continue; }
         }
 
@@ -82,7 +83,8 @@ export function useBotEngine({ prices, livePrice, asset }: Props) {
 
       // ── Bot 1 ───────────────────────────────────────────────────────────
       if (botConfigs.bot1.enabled) {
-        const sig = bot1Signal(prices, asset, botConfigs.bot1);
+        const lb1 = botConfigs.bot1.lookback ?? 50;
+        const sig = bot1Signal(prices.slice(-lb1), asset, botConfigs.bot1);
         if (sig) {
           const size = bot1PositionSize(sig.confidence, botConfigs.bot1);
           if (capital >= size) {
@@ -94,7 +96,8 @@ export function useBotEngine({ prices, livePrice, asset }: Props) {
 
       // ── Bot 2 ───────────────────────────────────────────────────────────
       if (botConfigs.bot2.enabled) {
-        const sig = bot2Signal(prices, asset, botConfigs.bot2);
+        const lb2 = botConfigs.bot2.lookback ?? 80;
+        const sig = bot2Signal(prices.slice(-lb2), asset, botConfigs.bot2);
         if (sig) {
           const size = bot2KellySize(livePrice, botConfigs.bot2, capital);
           if (capital >= size) {
@@ -106,7 +109,8 @@ export function useBotEngine({ prices, livePrice, asset }: Props) {
 
       // ── Bot 3 ───────────────────────────────────────────────────────────
       if (botConfigs.bot3.enabled) {
-        const sig = bot3Signal(prices, asset, botConfigs.bot3);
+        const lb3 = botConfigs.bot3.lookback ?? 100;
+        const sig = bot3Signal(prices.slice(-lb3), asset, botConfigs.bot3);
         if (sig) {
           const size = bot3PositionSize(sig.confidence, capital, botConfigs.bot3);
           if (capital >= size) {
