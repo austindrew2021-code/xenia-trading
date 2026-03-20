@@ -123,10 +123,27 @@ export interface Bot3Config {
   useMultiTPTiers: boolean;
 }
 
+export interface Bot4Config {
+  enabled: boolean;
+  lookback: number;
+  betSize: number;
+  maxSize: number;
+  leverage: number;
+  fvgMinBodyPct: number;
+  fvgMaxAge: number;
+  requireBOS: boolean;
+  requireVolSpike: boolean;
+  retestTolerance: number;
+  stopBeyondZone: boolean;
+  tpMultiple: number;
+  edgeThreshold: number;
+}
+
 export interface BotConfigs {
   bot1: Bot1Config;
   bot2: Bot2Config;
   bot3: Bot3Config;
+  bot4: Bot4Config;
 }
 
 export const DEFAULT_BOT1: Bot1Config = {
@@ -169,4 +186,20 @@ export const DEFAULT_BOT3: Bot3Config = {
   leverage: 15,
   useRSI: true, useStoch: true, useEMA: true, useCandlePatterns: true,
   useMomentum: true, useTrailingStop: true, useMultiTPTiers: true,
+};
+
+export const DEFAULT_BOT4: Bot4Config = {
+  enabled: false,
+  lookback: 80,
+  betSize: 15,
+  maxSize: 150,
+  leverage: 10,
+  fvgMinBodyPct: 0.25,
+  fvgMaxAge: 25,
+  requireBOS: true,
+  requireVolSpike: false,
+  retestTolerance: 0.4,
+  stopBeyondZone: true,
+  tpMultiple: 2.0,
+  edgeThreshold: 0.55,
 };
