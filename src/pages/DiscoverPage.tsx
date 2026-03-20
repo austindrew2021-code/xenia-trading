@@ -281,20 +281,28 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
   };
 
   const submitPost = async () => {
-    if (!supabase || !user || !newPost.trim()) return;
+    if (!user || !newPost.trim()) return;
     setPosting(true);
-    const tags = (newPost.match(/#\w+/g) ?? []).map(t => t.slice(1));
-    const { error: postErr } = await supabase.from('community_posts').insert({
-      user_id: user.id,
-      username: account?.username ?? 'Anonymous',
-      content: newPost,
-      tags,
-      likes: 0,
-      comments_count: 0,
-      is_announcement: false,
-      is_admin: false,
-    });
-    if (postErr) console.error('Post error:', postErr.message);
+    const tags = (newPost.match(/#\w+/g) ?? []).map((t: string) => t.slice(1));
+
+    // Use Edge Function to bypass any RLS issues
+    const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL
+      || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
+    try {
+      const { data: { session } } = await supabase!.auth.getSession();
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/create-post`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ content: newPost.trim(), tags }),
+      });
+      const result = await r.json();
+      if (!r.ok) console.error('Post error:', result.error);
+    } catch (e) {
+      console.error('Post failed:', e);
+    }
     setNewPost('');
     await loadPosts();
     setPosting(false);
