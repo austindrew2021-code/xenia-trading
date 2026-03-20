@@ -3,12 +3,13 @@ import { useTradingStore } from '../store';
 import { bot1Signal, bot1PositionSize } from '../bots/botOne';
 import { bot2Signal, bot2KellySize, bot2ShouldExit, bot2ShouldPartialExit } from '../bots/botTwo';
 import { bot3Signal, bot3PositionSize, bot3CheckTP } from '../bots/botThree';
+import { bot4Signal, bot4PositionSize } from '../bots/botFour';
 
 const BOT_INTERVAL = 15_000;
 
-interface Props { prices: number[]; livePrice: number; asset: string; }
+interface Props { prices: number[]; livePrice: number; asset: string; candles?: { open:number; high:number; low:number; close:number; volume:number }[]; }
 
-export function useBotEngine({ prices, livePrice, asset }: Props) {
+export function useBotEngine({ prices, livePrice, asset, candles = [] }: Props) {
   const peakPrices = useRef<Record<string, number>>({});
   const partialFlags = useRef<Set<string>>(new Set());
 
@@ -119,9 +120,25 @@ const { exit, reason } = bot2ShouldExit(pos.entryPrice, livePrice, peakPrices.cu
           }
         }
       }
+
+      // ── Bot 4: IFVG (Inverse Fair Value Gap) ─────────────────────────
+      if (botConfigs.bot4.enabled && candles.length >= 30) {
+        const lb4 = botConfigs.bot4.lookback ?? 80;
+        const candleSlice = candles.slice(-lb4);
+        const sig = bot4Signal(prices.slice(-lb4), candleSlice, asset, botConfigs.bot4);
+        if (sig) {
+          const size = bot4PositionSize(sig.confidence, capital, botConfigs.bot4);
+          if (capital >= size) {
+            const tp = botConfigs.bot4.stopBeyondZone ? sig.suggestedTP : undefined;
+            const sl = botConfigs.bot4.stopBeyondZone ? sig.suggestedSL : undefined;
+            const pos = openPosition(asset, sig.side, livePrice, size, botConfigs.bot4.leverage, 'bot3', tp, sl);
+            if (pos) addLog('🎯 Bot4 IFVG ' + sig.side + ' ' + asset + ' $' + size.toFixed(0) + ' x' + botConfigs.bot4.leverage + ' | ' + sig.description);
+          }
+        }
+      }
     };
 
     const iv = setInterval(run, BOT_INTERVAL);
     return () => clearInterval(iv);
-  }, [prices, livePrice, asset]);
+  }, [prices, livePrice, asset, candles]);
 }
