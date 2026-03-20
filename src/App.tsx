@@ -11,6 +11,7 @@ import { WalletDepositModal } from './components/WalletDepositModal';
 import { PointsBadge, PointsLeaderboard } from './components/PointsLeaderboard';
 import { MarketsPage } from './pages/MarketsPage';
 import { DiscoverPage } from './pages/DiscoverPage';
+import { SpotTradingPage } from './pages/SpotTradingPage';
 import { P2PPage } from './pages/P2PPage';
 import { EarnPage } from './pages/EarnPage';
 import { HomePage } from './pages/HomePage';
@@ -20,7 +21,7 @@ import { Side } from './types';
 import { TouchGrassModal, TouchGrassActive, useTouchGrass } from './components/TouchGrassMode';
 import { PnlShareCard } from './components/PnlShareCard';
 
-type Page = 'home' | 'trade' | 'markets' | 'p2p' | 'earn' | 'discover';
+type Page = 'home' | 'trade' | 'spot' | 'markets' | 'p2p' | 'earn' | 'discover';
 type SubNav = { tab?: string; rightTab?: string; discoverTab?: string; earnTab?: string };
 
 // ── Asset Selector ──────────────────────────────────────────────────────────
@@ -292,6 +293,7 @@ const NAV_ICONS: Record<Page, (active:boolean)=>React.ReactNode> = {
   markets:  (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
   discover: (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>,
   earn:     (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
+  spot:     (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>,
   p2p:      (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>,
 };
 
@@ -299,8 +301,8 @@ function MobileNav({ page, setPage }: { page:Page; setPage:(p:Page)=>void }) {
   const items: {id:Page;label:string}[] = [
     {id:'home',    label:'Home'},
     {id:'trade',   label:'Trade'},
+    {id:'spot',    label:'Spot'},
     {id:'markets', label:'Markets'},
-    {id:'discover',label:'Discover'},
     {id:'earn',    label:'Earn'},
   ];
   return (
@@ -386,6 +388,7 @@ export default function App() {
   const [showWallet, setShowWallet] = useState(false);
   const [flash,      setFlash]      = useState(false);
   const [showPnlShare, setShowPnlShare] = useState(false);
+  const [spotMock, setSpotMock]       = useState(true);
   const [quickTP, setQuickTP] = useState<number|null>(null);
   const [quickSL, setQuickSL] = useState<number|null>(null);
   const { showModal: showTG, grassActive, handleActivate: tgActivate, handleSkip: tgSkip, handleDeactivate: tgDeactivate } = useTouchGrass();
@@ -491,6 +494,7 @@ export default function App() {
         {page==='markets'&&<MarketsPage onTrade={handleChangeAsset} favourites={favs} onToggleFav={toggleFav}/>}
         {page==='p2p'&&<div className="overflow-y-auto h-full pb-16"><P2PPage/></div>}
         {page==='earn'&&<div className="overflow-y-auto h-full pb-16"><EarnPage/></div>}
+        {page==='spot'&&<SpotTradingPage isMock={spotMock} onToggleMock={()=>setSpotMock(m=>!m)}/>}
         {page==='discover'&&<DiscoverPage initialTab={discoverTab}/>}
       </div>
 
@@ -498,6 +502,7 @@ export default function App() {
       <div className="hidden md:flex flex-1 overflow-hidden flex-col">
         {page==='home'&&<div className="flex-1 overflow-y-auto"><HomePage onNavigate={handleNavigate} onShowWallet={()=>setShowWallet(true)} onShowAuth={()=>setShowAuth(true)}/></div>}
         {page==='p2p'&&<div className="flex-1 overflow-y-auto"><P2PPage/></div>}
+        {page==='spot'&&<div className="flex-1 overflow-hidden"><SpotTradingPage isMock={spotMock} onToggleMock={()=>setSpotMock(m=>!m)}/></div>}
         {page==='earn'&&<div className="flex-1 overflow-y-auto"><EarnPage/></div>}
         {page==='discover'&&<div className="flex-1 overflow-hidden"><DiscoverPage initialTab={discoverTab}/></div>}
         {page==='markets'&&<div className="flex-1 overflow-hidden"><MarketsPage onTrade={handleChangeAsset} favourites={favs} onToggleFav={toggleFav}/></div>}
