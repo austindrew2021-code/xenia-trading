@@ -151,13 +151,20 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
   const loadPosts = useCallback(async () => {
     if (!supabase) return;
     setLoading(true);
-    let q = supabase.from('community_posts').select('*').order('created_at', { ascending:false }).limit(30);
-    if (tab === 'following' && user && following.length > 0) q = q.in('user_id', following);
-    if (tab === 'following' && user && following.length === 0) { setPosts([]); setLoading(false); return; }
-    if (tab === 'announcements') q = q.eq('is_announcement', true);
-    else if (tab === 'discover') q = q.eq('is_announcement', false);
-    const { data } = await q;
-    setPosts((data as Post[]) ?? []);
+    try {
+      let q = supabase.from('community_posts').select('*').order('created_at', { ascending:false }).limit(50);
+      if (tab === 'following' && user && following.length > 0) q = q.in('user_id', following);
+      if (tab === 'following' && user && following.length === 0) { setPosts([]); setLoading(false); return; }
+      if (tab === 'announcements') q = q.eq('is_announcement', true);
+      // For discover tab, show ALL posts (including ones without is_announcement set)
+      // The filter was preventing seeing new posts
+      const { data, error } = await q;
+      if (error) console.error('loadPosts error:', error.message);
+      setPosts((data as Post[]) ?? []);
+    } catch(e) {
+      console.error('loadPosts exception:', e);
+      setPosts([]);
+    }
     setLoading(false);
   }, [tab, user, following]);
 
