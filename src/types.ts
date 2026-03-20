@@ -47,6 +47,7 @@ export interface TradeSignal {
 
 export interface Bot1Config {
   enabled: boolean;
+  lookback: number; // candles to look back for signals
   betSize: number;
   sizeScaleExtra: number;
   edgeThreshold: number;
@@ -68,6 +69,7 @@ export interface Bot1Config {
 
 export interface Bot2Config {
   enabled: boolean;
+  lookback: number;
   betSize: number;
   maxSize: number;
   edgeThreshold: number;
@@ -93,6 +95,7 @@ export interface Bot2Config {
 
 export interface Bot3Config {
   enabled: boolean;
+  lookback: number;
   betSizeBase: number;
   betSizeMax: number;
   edgeThreshold: number;
@@ -128,6 +131,7 @@ export interface BotConfigs {
 
 export const DEFAULT_BOT1: Bot1Config = {
   enabled: false,
+  lookback: 50,
   betSize: 20, sizeScaleExtra: 8, edgeThreshold: 0.07, maxSize: 200,
   rsiPeriod: 14, rsiOversold: 35, rsiOverbought: 65,
   stochKPeriod: 14, stochSmoothK: 3, stochSmoothD: 3,
@@ -138,6 +142,7 @@ export const DEFAULT_BOT1: Bot1Config = {
 
 export const DEFAULT_BOT2: Bot2Config = {
   enabled: false,
+  lookback: 80,
   betSize: 10, maxSize: 100, edgeThreshold: 0.065, minConf: 3,
   minAtrPct: 0.08, maxAtrPct: 1.2,
   partialExitAtGain: 0.5, hardStopLossPct: 0.1, atrTrailMultiplier: 1.5,
@@ -149,6 +154,7 @@ export const DEFAULT_BOT2: Bot2Config = {
 
 export const DEFAULT_BOT3: Bot3Config = {
   enabled: false,
+  lookback: 100,
   betSizeBase: 5.5, betSizeMax: 45, edgeThreshold: 0.005,
   minConf: 2.2, minAtrPct: 0.08, maxAtrPct: 2.8,
   hardStopLossPct: 0.045, trailActivateAt: 0.18, trailDropPct: 0.06,
