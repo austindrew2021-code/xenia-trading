@@ -1,5 +1,5 @@
 import { useTradingStore } from '../store';
-import { Bot1Config, Bot2Config, Bot3Config } from '../types';
+import { Bot1Config, Bot2Config, Bot3Config, Bot4Config } from '../types';
 import { useState } from 'react';
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
@@ -20,6 +20,8 @@ function Field({ label, value, onChange, step = 0.01, min = 0 }: {
       <input type="number" value={value} step={step} min={min}
         onChange={e => onChange(parseFloat(e.target.value) || 0)}
         className="w-20 bg-[#0B0E14] border border-white/[0.08] rounded-lg px-2 py-1 text-xs text-[#F4F6FA] text-right outline-none focus:border-[#2BFFF1]/40" />
+
+      {/* ── Bot 4: IFVG ── */}
     </div>
   );
 }
@@ -65,17 +67,20 @@ function BotCard({ id, title, desc, badge, active, color, children }: {
           {children}
         </div>
       )}
+
+      {/* ── Bot 4: IFVG ── */}
     </div>
   );
 }
 
 export function BotPanel() {
   const { botConfigs, updateBotConfig } = useTradingStore();
-  const { bot1, bot2, bot3 } = botConfigs;
+  const { bot1, bot2, bot3, bot4 } = botConfigs;
 
   const upd1 = (p: Partial<Bot1Config>) => updateBotConfig('bot1', p);
   const upd2 = (p: Partial<Bot2Config>) => updateBotConfig('bot2', p);
   const upd3 = (p: Partial<Bot3Config>) => updateBotConfig('bot3', p);
+  const upd4 = (p: Partial<Bot4Config>) => updateBotConfig('bot4', p);
 
   return (
     <div className="flex flex-col gap-3 h-full overflow-y-auto pr-1">
@@ -208,6 +213,51 @@ export function BotPanel() {
                   className="w-14 bg-[#0B0E14] border border-white/[0.08] rounded px-1.5 py-0.5 text-[10px] text-[#F4F6FA] text-right outline-none" />
               </div>
             ))}
+          </div>
+        </div>
+      </BotCard>
+
+      {/* ── Bot 4: IFVG ── */}
+      <BotCard id="bot4" title="Bot 4 — IFVG Scalper" desc="ICT Inverse Fair Value Gap: detects FVG imbalances, waits for full inversion, enters on retest. Best on 1m–15m."
+        badge="ICT" active={bot4?.enabled ?? false} color="#2BFFF1">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-[#A7B0B7] font-semibold">Enable Bot 4</span>
+            <Toggle on={bot4?.enabled ?? false} onChange={v => upd4({ enabled: v })} />
+          </div>
+
+          {/* Visual explanation */}
+          <div className="rounded-xl bg-[#2BFFF1]/05 border border-[#2BFFF1]/15 p-3 space-y-1">
+            <p className="text-[10px] text-[#2BFFF1] font-bold">How IFVG works:</p>
+            <p className="text-[9px] text-[#6B7280] leading-relaxed">1. Detects 3-candle FVG imbalances (price moves too fast, leaves a gap)</p>
+            <p className="text-[9px] text-[#6B7280] leading-relaxed">2. Waits for price to fully trade <em>through</em> the FVG (inversion)</p>
+            <p className="text-[9px] text-[#6B7280] leading-relaxed">3. Enters when price <em>retests</em> the zone — bullish FVG flipped = resistance, bearish FVG flipped = support</p>
+            <div className="flex gap-2 mt-1">
+              <span className="text-[9px] px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/20">🔴 Bullish FVG → SHORT</span>
+              <span className="text-[9px] px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/20">🟢 Bearish FVG → LONG</span>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <p className="text-[10px] text-[#4B5563] uppercase tracking-wide mb-2">Confirmations</p>
+            <div className="flex flex-wrap gap-1.5">
+              <IndicatorToggle label="Require BOS" on={bot4?.requireBOS ?? true} onChange={v => upd4({ requireBOS: v })} />
+              <IndicatorToggle label="Vol Spike" on={bot4?.requireVolSpike ?? false} onChange={v => upd4({ requireVolSpike: v })} />
+              <IndicatorToggle label="Zone SL/TP" on={bot4?.stopBeyondZone ?? true} onChange={v => upd4({ stopBeyondZone: v })} />
+            </div>
+          </div>
+
+          <div className="space-y-2 pt-1">
+            <p className="text-[10px] text-[#4B5563] uppercase tracking-wide">Parameters</p>
+            <Field label="Lookback (candles)" value={bot4?.lookback ?? 80} step={10} min={20} onChange={v => upd4({ lookback: v })} />
+            <Field label="Base Size ($)" value={bot4?.betSize ?? 15} step={5} onChange={v => upd4({ betSize: v })} />
+            <Field label="Max Size ($)" value={bot4?.maxSize ?? 150} step={10} onChange={v => upd4({ maxSize: v })} />
+            <Field label="Leverage" value={bot4?.leverage ?? 10} step={1} min={1} onChange={v => upd4({ leverage: v })} />
+            <Field label="Min FVG Body %" value={bot4?.fvgMinBodyPct ?? 0.25} step={0.05} onChange={v => upd4({ fvgMinBodyPct: v })} />
+            <Field label="Max FVG Age" value={bot4?.fvgMaxAge ?? 25} step={5} min={5} onChange={v => upd4({ fvgMaxAge: v })} />
+            <Field label="Retest Tolerance" value={bot4?.retestTolerance ?? 0.4} step={0.05} onChange={v => upd4({ retestTolerance: v })} />
+            <Field label="TP Multiple" value={bot4?.tpMultiple ?? 2.0} step={0.25} onChange={v => upd4({ tpMultiple: v })} />
+            <Field label="Min Confidence" value={bot4?.edgeThreshold ?? 0.55} step={0.05} onChange={v => upd4({ edgeThreshold: v })} />
           </div>
         </div>
       </BotCard>
