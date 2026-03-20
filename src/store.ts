@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   Position, BotConfigs, Side,
-  DEFAULT_BOT1, DEFAULT_BOT2, DEFAULT_BOT3
+  DEFAULT_BOT1, DEFAULT_BOT2, DEFAULT_BOT3, DEFAULT_BOT4
 } from './types';
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
@@ -43,7 +43,7 @@ interface TradingState {
   liquidatePosition: (id: string, closePrice: number) => void;
   partialClosePosition: (id: string, closePrice: number, fraction: number) => void;
   updatePositionPnl: (id: string, currentPrice: number) => void;
-  updateBotConfig: (bot: 'bot1' | 'bot2' | 'bot3', patch: object) => void;
+  updateBotConfig: (bot: 'bot1' | 'bot2' | 'bot3' | 'bot4', patch: object) => void;
   addLog: (msg: string) => void;
   clearClosed: () => void;
 }
@@ -58,6 +58,7 @@ export const useTradingStore = create<TradingState>()(
         bot1: DEFAULT_BOT1,
         bot2: DEFAULT_BOT2,
         bot3: DEFAULT_BOT3,
+        bot4: DEFAULT_BOT4,
       },
       logs: [],
 
