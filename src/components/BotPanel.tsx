@@ -103,6 +103,7 @@ export function BotPanel() {
           </div>
           <div className="space-y-2 pt-1">
             <p className="text-[10px] text-[#4B5563] uppercase tracking-wide">Parameters</p>
+            <Field label="Lookback (candles)" value={bot1.lookback ?? 50} step={10} min={10} onChange={v => upd1({ lookback: v })} />
             <Field label="Base Size ($)" value={bot1.betSize} step={5} onChange={v => upd1({ betSize: v })} />
             <Field label="Conf Scale ($)" value={bot1.sizeScaleExtra} step={1} onChange={v => upd1({ sizeScaleExtra: v })} />
             <Field label="Max Size ($)" value={bot1.maxSize} step={10} onChange={v => upd1({ maxSize: v })} />
@@ -138,6 +139,7 @@ export function BotPanel() {
           </div>
           <div className="space-y-2 pt-1">
             <p className="text-[10px] text-[#4B5563] uppercase tracking-wide">Parameters</p>
+            <Field label="Lookback (candles)" value={bot2.lookback ?? 80} step={10} min={10} onChange={v => upd2({ lookback: v })} />
             <Field label="Base Size ($)" value={bot2.betSize} step={5} onChange={v => upd2({ betSize: v })} />
             <Field label="Max Size ($)" value={bot2.maxSize} step={10} onChange={v => upd2({ maxSize: v })} />
             <Field label="Leverage" value={bot2.leverage} step={1} min={1} onChange={v => upd2({ leverage: v })} />
@@ -174,6 +176,7 @@ export function BotPanel() {
           </div>
           <div className="space-y-2 pt-1">
             <p className="text-[10px] text-[#4B5563] uppercase tracking-wide">Parameters</p>
+            <Field label="Lookback (candles)" value={bot3.lookback ?? 100} step={10} min={10} onChange={v => upd3({ lookback: v })} />
             <Field label="Base Size ($)" value={bot3.betSizeBase} step={0.5} onChange={v => upd3({ betSizeBase: v })} />
             <Field label="Max Size ($)" value={bot3.betSizeMax} step={5} onChange={v => upd3({ betSizeMax: v })} />
             <Field label="Leverage" value={bot3.leverage} step={1} min={1} onChange={v => upd3({ leverage: v })} />
