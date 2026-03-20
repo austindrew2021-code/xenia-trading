@@ -288,27 +288,39 @@ export function DiscoverPage({ initialTab }: { initialTab?: string }) {
   };
 
   const submitPost = async () => {
-    if (!user || !newPost.trim()) return;
+    if (!supabase || !user || !newPost.trim()) return;
     setPosting(true);
     const tags = (newPost.match(/#\w+/g) ?? []).map((t: string) => t.slice(1));
-
-    // Use Edge Function to bypass any RLS issues
-    const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL
-      || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
     try {
-      const { data: { session } } = await supabase!.auth.getSession();
-      const r = await fetch(`${SUPABASE_URL}/functions/v1/create-post`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({ content: newPost.trim(), tags }),
-      });
-      const result = await r.json();
-      if (!r.ok) console.error('Post error:', result.error);
+      // Direct insert — RLS policy allows auth.uid() IS NOT NULL
+      const { error } = await supabase
+        .from('community_posts')
+        .insert({
+          user_id: user.id,
+          username: account?.username ?? user.email?.split('@')[0] ?? 'Anonymous',
+          content: newPost.trim(),
+          tags,
+          likes: 0,
+          comments_count: 0,
+          is_announcement: false,
+          is_admin: false,
+        });
+      if (error) {
+        console.error('Direct insert failed:', error.message, error.code);
+        // Fallback: edge function
+        const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          const r = await fetch(`${SUPABASE_URL}/functions/v1/create-post`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ content: newPost.trim(), tags }),
+          });
+          if (!r.ok) console.error('Edge fn also failed:', await r.text());
+        }
+      }
     } catch (e) {
-      console.error('Post failed:', e);
+      console.error('Post exception:', e);
     }
     setNewPost('');
     await loadPosts();
