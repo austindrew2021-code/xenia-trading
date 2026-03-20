@@ -196,13 +196,39 @@ export function usePriceData(
       }
     } else {
       // ── Binance token ─────────────────────────────────────────────────
-      const c = await fetchBinanceCandles(asset.symbol, interval);
+      let c = await fetchBinanceCandles(asset.symbol, interval);
       if (c.length > 0) {
         setCandles(c);
         setLivePrice(c[c.length - 1].close);
         const first = c[0].open;
         const last  = c[c.length - 1].close;
         setChange24h(first > 0 ? ((last - first) / first) * 100 : 0);
+      } else {
+        // Fallback: look up the token on DexScreener and try GeckoTerminal
+        const knownAddresses: Record<string, string> = {
+          'WIFUSDT':     'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+          'POPCATUSDT':  '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
+          'MEWUSDT':     'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREkzUo8THF',
+          'BOMEUSDT':    'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82',
+          'GOATUSDT':    'CzLSujWBLFsSjncfkh59rUFqvafWcY5tzedWJSuypump',
+          'PNUTUSDT':    '2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump',
+          'MOODENGUSDT': 'ED5nyyWEzpPPiWimP8vYm7sD7TD3LAt3Q3gRTWHzc8yy',
+          'BONKUSDT':    'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+          'JUPUSDT':     'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+        };
+        const tokenAddr = knownAddresses[asset.symbol];
+        if (tokenAddr) {
+          const pair = await getPairAddress(tokenAddr);
+          if (pair) {
+            c = await fetchGeckoCandles(pair, interval);
+            if (c.length > 0) {
+              setCandles(c);
+              const last = c[c.length-1].close;
+              setLivePrice(last);
+              setChange24h(c.length > 1 ? ((last - c[0].open) / c[0].open) * 100 : 0);
+            }
+          }
+        }
       }
     }
 
@@ -250,3 +276,6 @@ export function usePriceData(
 // Available intervals for UI
 export const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'] as const;
 export type Interval = typeof INTERVALS[number];
+
+// Alias for backward compat
+export const ASSETS = TOP_ASSETS;
