@@ -395,7 +395,7 @@ export default function App() {
   const {capital,setCapital,resetCapital,positions} = useTradingStore();
   const {user,account,signOut,loading:authLoading} = useAuth();
 
-  useBotEngine({prices,livePrice,asset:asset.label});
+  useBotEngine({prices,livePrice,asset:asset.label,candles});
   useEffect(()=>{setFlash(true);setTimeout(()=>setFlash(false),300);},[livePrice]);
   useEffect(()=>{if(account)setCapital(account.use_real?account.real_balance:account.mock_balance);},[account,setCapital]);
 
