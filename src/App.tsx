@@ -15,6 +15,7 @@ import { P2PPage } from './pages/P2PPage';
 import { EarnPage } from './pages/EarnPage';
 import { HomePage } from './pages/HomePage';
 import { calcRSI, calcStochastic, calcATR } from './bots/indicators';
+import { BuySellPressure } from './components/BuySellPressure';
 import { Side } from './types';
 import { TouchGrassModal, TouchGrassActive, useTouchGrass } from './components/TouchGrassMode';
 import { PnlShareCard } from './components/PnlShareCard';
@@ -49,8 +50,8 @@ function AssetSelector({ current, onChange }: { current:string; onChange:(id:str
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 mt-1.5 w-72 bg-[#0B0E14] border border-white/[0.1] rounded-2xl shadow-2xl z-50 overflow-hidden">
+          <div className="fixed inset-0 z-[199]" onClick={() => setOpen(false)} />
+          <div className="absolute top-full left-0 mt-1.5 w-72 bg-[#0B0E14] border border-white/[0.1] rounded-2xl shadow-2xl z-[200] overflow-hidden">
             <div className="p-3 border-b border-white/[0.06]">
               <input autoFocus placeholder="Search Pump.fun / Solana tokens…" value={query}
                 onChange={e => setQuery(e.target.value)}
@@ -89,6 +90,8 @@ function AssetSelector({ current, onChange }: { current:string; onChange:(id:str
 }
 
 // ── Trade form ──────────────────────────────────────────────────────────────
+const LEVERAGE_PRESETS = [1,5,10,25,50,100,150,200,300];
+
 function TradeForm({ livePrice, asset }: { livePrice:number; asset:string }) {
   const { capital, openPosition, addLog } = useTradingStore();
   const { account, saveAccount, recordTrade } = useAuth();
@@ -97,58 +100,123 @@ function TradeForm({ livePrice, asset }: { livePrice:number; asset:string }) {
   const [lev,setLev]   = useState('10');
   const [tp,setTp]     = useState('');
   const [sl,setSl]     = useState('');
-  const sizeN = parseFloat(size)||0, levN = parseInt(lev)||1;
-  const notional = sizeN*levN;
-  const cap = account?(account.use_real?account.real_balance:account.mock_balance):capital;
-  const liqPct = (1/levN)*0.9;
+  const [warnAck, setWarnAck] = useState(false);
+
+  const sizeN  = parseFloat(size)||0;
+  const levN   = Math.min(parseInt(lev)||1, 300);
+  const notional = sizeN * levN;
+  const cap    = account ? (account.use_real ? account.real_balance : account.mock_balance) : capital;
+  const liqPct = (1/levN) * 0.9;
+  const isHighLev = levN > 50;
+  const isExtrLev = levN > 100;
+  const needsWarn = isHighLev && !warnAck;
+
   const submit = async () => {
-    if (sizeN<=0||sizeN>cap) return;
-    const pos = openPosition(asset,side,livePrice,sizeN,levN,'manual',tp?parseFloat(tp):undefined,sl?parseFloat(sl):undefined);
+    if (sizeN <= 0 || sizeN > cap) return;
+    if (needsWarn) { setWarnAck(true); return; }
+    const pos = openPosition(asset, side, livePrice, sizeN, levN, 'manual', tp ? parseFloat(tp) : undefined, sl ? parseFloat(sl) : undefined);
     if (pos) {
       addLog(`📌 Manual ${side} ${asset} $${sizeN} ×${levN} @ $${livePrice.toFixed(4)}`);
       if (account) {
-        const field = account.use_real?'real_balance':'mock_balance';
-        const bal   = account.use_real?account.real_balance:account.mock_balance;
-        saveAccount({[field]:Math.max(0,bal-sizeN)} as any);
-        recordTrade(notional,0,false);
+        const field = account.use_real ? 'real_balance' : 'mock_balance';
+        const bal = account.use_real ? account.real_balance : account.mock_balance;
+        saveAccount({ [field]: Math.max(0, bal - sizeN) } as any);
+        recordTrade(notional, 0, false);
       }
+      setWarnAck(false);
     }
   };
+
+  const levBtnColor = (p: number) => {
+    if (levN === p) return p > 100 ? 'bg-red-500/20 text-red-400 border-red-500/30' : p > 50 ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' : 'bg-[#2BFFF1]/15 text-[#2BFFF1] border-[#2BFFF1]/30';
+    return 'text-[#4B5563] border-white/[0.07] hover:text-[#A7B0B7]';
+  };
+
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs font-semibold text-[#A7B0B7] uppercase tracking-widest">Place Trade</p>
-        {account&&<span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${account.use_real?'text-[#2BFFF1] border-[#2BFFF1]/30 bg-[#2BFFF1]/10':'text-[#6B7280] border-white/[0.08]'}`}>{account.use_real?'LIVE':'MOCK'}</span>}
+        {account && <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${account.use_real ? 'text-[#2BFFF1] border-[#2BFFF1]/30 bg-[#2BFFF1]/10' : 'text-[#6B7280] border-white/[0.08]'}`}>{account.use_real ? 'LIVE' : 'MOCK'}</span>}
       </div>
+
       <div className="flex rounded-xl overflow-hidden border border-white/[0.07] mb-3">
-        {(['LONG','SHORT'] as Side[]).map(s=>(
-          <button key={s} onClick={()=>setSide(s)} className={`flex-1 py-2.5 text-xs font-bold transition-all ${side===s?s==='LONG'?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>
-            {s==='LONG'?'▲ LONG':'▼ SHORT'}
+        {(['LONG','SHORT'] as Side[]).map(s => (
+          <button key={s} onClick={() => setSide(s)} className={`flex-1 py-2.5 text-xs font-bold transition-all ${side===s ? s==='LONG' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400' : 'text-[#4B5563] hover:text-[#A7B0B7]'}`}>
+            {s==='LONG' ? '▲ LONG' : '▼ SHORT'}
           </button>
         ))}
       </div>
-      <div className="space-y-2 mb-3">
-        {[['Size ($)',size,setSize],['Leverage',lev,setLev],['TP Price',tp,setTp],['SL Price',sl,setSl]].map(([label,val,setter]:any)=>(
-          <div key={label} className="flex items-center gap-2">
-            <span className="text-[10px] text-[#6B7280] w-16 flex-shrink-0">{label}</span>
-            <input type="number" value={val} placeholder={label.includes('TP')||label.includes('SL')?'Optional':''} onChange={e=>setter(e.target.value)}
-              className="flex-1 bg-[#0B0E14] border border-white/[0.08] rounded-lg px-2 py-1.5 text-xs text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40"/>
-          </div>
-        ))}
+
+      {/* Size */}
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[10px] text-[#6B7280] w-16 flex-shrink-0">Size ($)</span>
+        <input type="number" value={size} onChange={e => setSize(e.target.value)}
+          className="flex-1 bg-[#0B0E14] border border-white/[0.08] rounded-lg px-2 py-1.5 text-xs text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40"/>
       </div>
+
+      {/* Leverage */}
+      <div className="mb-3">
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="text-[10px] text-[#6B7280] w-16 flex-shrink-0">Leverage</span>
+          <input type="number" value={lev} min="1" max="300" onChange={e => { setLev(e.target.value); setWarnAck(false); }}
+            className={`flex-1 bg-[#0B0E14] border rounded-lg px-2 py-1.5 text-xs text-[#F4F6FA] outline-none ${isExtrLev ? 'border-red-500/50' : isHighLev ? 'border-yellow-500/40' : 'border-white/[0.08] focus:border-[#2BFFF1]/40'}`}/>
+          <span className={`text-xs font-black ${isExtrLev ? 'text-red-400' : isHighLev ? 'text-yellow-400' : 'text-[#A7B0B7]'}`}>{levN}×</span>
+        </div>
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {LEVERAGE_PRESETS.map(p => (
+            <button key={p} onClick={() => { setLev(String(p)); setWarnAck(false); }}
+              className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-all ${levBtnColor(p)}`}>
+              {p}×
+            </button>
+          ))}
+        </div>
+        <input type="range" min="1" max="300" value={levN} onChange={e => { setLev(e.target.value); setWarnAck(false); }}
+          className="w-full h-1 rounded-full appearance-none bg-white/[0.05] cursor-pointer"
+          style={{ accentColor: isExtrLev ? '#EF4444' : isHighLev ? '#F59E0B' : '#2BFFF1' }}/>
+        <div className="flex justify-between text-[9px] text-[#374151] mt-0.5"><span>1×</span><span>150×</span><span>300×</span></div>
+      </div>
+
+      {isExtrLev && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2.5 mb-3">
+          <p className="text-[10px] text-red-400 font-bold mb-0.5">⚠️ EXTREME RISK — {levN}× LEVERAGE</p>
+          <p className="text-[9px] text-red-400/70">A {((1/levN)*100).toFixed(2)}% adverse move will liquidate. Most retail traders lose money at this leverage.</p>
+        </div>
+      )}
+      {isHighLev && !isExtrLev && (
+        <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/08 p-2.5 mb-3">
+          <p className="text-[10px] text-yellow-400 font-semibold">⚡ High leverage — {levN}× — Liq in {((1/levN)*100).toFixed(1)}% move</p>
+        </div>
+      )}
+
+      {[['TP Price', tp, setTp], ['SL Price', sl, setSl]].map(([label, val, setter]: any) => (
+        <div key={label} className="flex items-center gap-2 mb-2">
+          <span className="text-[10px] text-[#6B7280] w-16 flex-shrink-0">{label}</span>
+          <input type="number" value={val} placeholder="Optional" onChange={e => setter(e.target.value)}
+            className="flex-1 bg-[#0B0E14] border border-white/[0.08] rounded-lg px-2 py-1.5 text-xs text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40"/>
+        </div>
+      ))}
+
       <div className="rounded-xl bg-[#0B0E14] px-3 py-2.5 mb-3 space-y-1.5">
-        {[['Notional',`$${notional.toFixed(0)}`],[`Liq ~${(liqPct*100).toFixed(1)}% away`,`$${(side==='LONG'?livePrice*(1-liqPct):livePrice*(1+liqPct)).toFixed(4)}`],['Available',`$${cap.toFixed(2)}`,sizeN>cap?'#F87171':'#4ADE80']].map(([k,v,c]:any)=>(
-          <div key={k} className="flex justify-between text-[10px]"><span className="text-[#4B5563]">{k}</span><span style={{color:c||'#A7B0B7'}}>{v}</span></div>
+        {[
+          ['Notional', `$${notional.toFixed(0)}`],
+          [`Liq ~${(liqPct*100).toFixed(2)}% away`, `$${(side==='LONG' ? livePrice*(1-liqPct) : livePrice*(1+liqPct)).toFixed(6)}`],
+          ['Available', `$${cap.toFixed(2)}`, sizeN > cap ? '#F87171' : '#4ADE80'],
+        ].map(([k, v, c]: any) => (
+          <div key={k} className="flex justify-between text-[10px]"><span className="text-[#4B5563]">{k}</span><span style={{ color: c || '#A7B0B7' }}>{v}</span></div>
         ))}
       </div>
-      <button onClick={submit} disabled={sizeN<=0||sizeN>cap}
-        className={`w-full py-3 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${side==='LONG'?'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30':'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'}`}>
-        {side==='LONG'?'▲ Open Long':'▼ Open Short'}
+
+      <button onClick={submit} disabled={sizeN <= 0 || sizeN > cap}
+        className={`w-full py-3 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+          needsWarn
+            ? isExtrLev ? 'bg-red-500/30 text-red-300 border border-red-500/50 animate-pulse' : 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 animate-pulse'
+            : side==='LONG' ? 'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
+        }`}>
+        {needsWarn ? `⚠️ Confirm ${levN}× — click again to open` : side==='LONG' ? '▲ Open Long' : '▼ Open Short'}
       </button>
     </div>
   );
 }
-
 function IndicatorsPanel({ prices }: { prices:number[] }) {
   const rsi=calcRSI(prices), {k,d}=calcStochastic(prices), atr=calcATR(prices)*100;
   const rsiC=rsi>70?'#F87171':rsi<30?'#4ADE80':'#A7B0B7', stC=k>80?'#F87171':k<20?'#4ADE80':'#A7B0B7';
@@ -286,7 +354,7 @@ function MobileTrade({ assetId,livePrice,change24h,candles,prices,assetLabel,onC
             <div className="flex-1 overflow-y-auto p-3 min-h-0"><PositionsTable livePrice={livePrice}/></div>
           </div>
         )}
-        {tab==='trade'&&<div className="overflow-y-auto h-full p-3 space-y-3"><TradeForm livePrice={livePrice} asset={assetLabel}/><IndicatorsPanel prices={prices}/></div>}
+        {tab==='trade'&&<div className="overflow-y-auto h-full p-3 space-y-3"><TradeForm livePrice={livePrice} asset={assetLabel}/><IndicatorsPanel prices={prices}/><BuySellPressure candles={candles} livePrice={livePrice} asset={assetLabel}/></div>}
         {tab==='bots'&&<div className="overflow-y-auto h-full p-3 space-y-3"><BotPanel/><ActivityLog/></div>}
         {tab==='board'&&<div className="overflow-y-auto h-full p-4"><PointsLeaderboard/></div>}
       </div>
@@ -451,7 +519,7 @@ export default function App() {
                     <button key={t} onClick={()=>setRightTab(t as any)} className={`flex-1 py-2 text-[10px] font-semibold transition-all ${rightTab===t?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{l}</button>
                   ))}
                 </div>
-                {rightTab==='trade'?<><TradeForm livePrice={livePrice} asset={asset.label}/><IndicatorsPanel prices={prices}/><div className="flex-1 overflow-hidden min-h-0"><ActivityLog/></div></>
+                {rightTab==='trade'?<><TradeForm livePrice={livePrice} asset={asset.label}/><IndicatorsPanel prices={prices}/><BuySellPressure candles={candles} livePrice={livePrice} asset={asset.label}/><div className="flex-1 overflow-hidden min-h-0"><ActivityLog/></div></>
                 :rightTab==='bots'?<div className="flex-1 overflow-y-auto"><BotPanel/></div>
                 :<div className="flex-1 overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4"><PointsLeaderboard/></div>}
               </div>
