@@ -30,7 +30,9 @@ function parsePair(p:any, fallback=''): Token|null {
   if(!p?.baseToken?.symbol||!p?.baseToken?.name) return null;
   const price=parseFloat(p.priceUsd||'0'); if(price<=0) return null;
   const mcap=parseFloat(p.marketCap||p.fdv||'0');
-  if(mcap > 0 && mcap < MIN_MCAP) return null; // filter $30k mcap
+  // Only filter out tokens where mcap is KNOWN and below minimum
+  // If mcap is 0 (unknown), still allow through to not over-filter
+  if(mcap > 0 && mcap < MIN_MCAP) return null;
   const sym=(p.baseToken.symbol||'').toUpperCase();
   const img=p.info?.imageUrl||IMG_BY_SYM[sym]||fallback;
   if(!img) return null;
@@ -67,7 +69,12 @@ function fallbackKnown(): Token[] {
 // Search includes Pump.fun, Raydium, all Solana DEXes
 async function fetchSearch(q:string, limit=80): Promise<Token[]> {
   try {
-    const r=await fetch(`https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`);
+    // If query looks like a Solana address, use token endpoint directly
+    const isAddr = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(q.trim());
+    const url = isAddr
+      ? `https://api.dexscreener.com/latest/dex/tokens/${q.trim()}`
+      : `https://api.dexscreener.com/latest/dex/search?q=${encodeURIComponent(q)}`;
+    const r=await fetch(url);
     if(!r.ok) return [];
     const d=await r.json(); const seen=new Set<string>(); const tokens:Token[]=[];
     for(const p of (d.pairs||[]).slice(0,limit*2)) {
@@ -102,11 +109,21 @@ export function MarketsPage({onTrade,favourites,onToggleFav}:Props) {
   const load=useCallback(async()=>{
     const id=++gen.current; setLoading(true);
     let results:Token[]=[];
-    if(tab==='new'){results=await fetchSearch('solana pump new token launch 2025',80);}
-    else{
-      const[known,extra]=await Promise.all([fetchKnown(),fetchSearch('solana meme bonk wif popcat pump raydium',60)]);
+    if(tab==='new'){
+      const[n1,n2]=await Promise.all([
+        fetchSearch('new solana token pump.fun 2025',50),
+        fetchSearch('new raydium solana launch 2025',50)
+      ]);
+      const seen=new Set<string>();
+      results=[...n1,...n2].filter(t=>{ if(seen.has(t.symbol.toUpperCase())) return false; seen.add(t.symbol.toUpperCase()); return true; });
+    } else {
+      const[known,extra1,extra2]=await Promise.all([
+        fetchKnown(),
+        fetchSearch('solana meme bonk wif popcat pump raydium',50),
+        fetchSearch('solana token defi pump.fun raydium jupiter',50)
+      ]);
       const seen=new Set(known.map(t=>t.symbol.toUpperCase()));
-      results=[...known,...extra.filter(t=>!seen.has(t.symbol.toUpperCase()))];
+      results=[...known,...extra1.filter(t=>!seen.has(t.symbol.toUpperCase())&&!!seen.add(t.symbol.toUpperCase())),...extra2.filter(t=>!seen.has(t.symbol.toUpperCase()))];
     }
     if(id===gen.current){setTokens(results);setLoading(false);}
   },[tab]);
