@@ -154,55 +154,157 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     const preventScroll = (e: WheelEvent) => { e.stopPropagation(); };
     el.addEventListener('wheel', preventScroll, { passive: false });
 
-    // ── Custom touch handler for price axis drag (right ~60px) ──────────
-    // lightweight-charts doesn't route touch events to price scale natively,
-    // so we implement vertical-drag-to-zoom manually for that region.
-    let priceAxisTouch: { startY: number; startMarginTop: number; startMarginBottom: number } | null = null;
+    // ── TradingView-style price axis drag ────────────────────────────────
+    // Uses autoscaleInfoProvider to control the visible price range directly.
+    // This keeps candles stationary horizontally while zooming in/out.
+    // Drag UP = zoom in (fewer prices shown, candles appear larger/taller)
+    // Drag DOWN = zoom out (more prices shown, candles appear smaller/shorter)
+
+    interface PriceAxisState {
+      startY: number;
+      centerPrice: number;   // price at center of chart when drag began
+      halfRange: number;     // half of the visible price range when drag began
+      lastY: number;         // for velocity calculation
+      lastTime: number;
+    }
+    let priceAxisTouch: PriceAxisState | null = null;
+    // Custom price range override (null = use autoScale)
+    let customPriceRange: { min: number; max: number } | null = null;
+
+    // Helper: get visible price range from current candle data
+    const getVisiblePriceRange = (): { min: number; max: number; center: number; half: number } | null => {
+      const series = candleRef.current;
+      if (!series || !containerRef.current) return null;
+      const h = containerRef.current.clientHeight;
+      // Sample prices at top, center, bottom of chart
+      const topPrice    = series.coordinateToPrice(10);
+      const centerPrice = series.coordinateToPrice(h / 2);
+      const bottomPrice = series.coordinateToPrice(h - 10);
+      if (topPrice == null || centerPrice == null || bottomPrice == null) return null;
+      const min  = Math.min(topPrice, bottomPrice);
+      const max  = Math.max(topPrice, bottomPrice);
+      const half = Math.abs(max - min) / 2;
+      return { min, max, center: centerPrice, half };
+    };
+
+    // Apply custom price range via autoscaleInfoProvider
+    const applyPriceRange = (min: number, max: number) => {
+      if (!candleRef.current) return;
+      customPriceRange = { min, max };
+      candleRef.current.applyOptions({
+        autoscaleInfoProvider: () => ({
+          priceRange: { minValue: min, maxValue: max },
+          margins: { above: 0, below: 0 },
+        }),
+      });
+    };
+
+    // Reset to autoScale
+    const resetPriceScale = () => {
+      if (!candleRef.current) return;
+      customPriceRange = null;
+      candleRef.current.applyOptions({ autoscaleInfoProvider: undefined });
+    };
 
     const onTouchStart = (e: TouchEvent) => {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
       const touch = e.touches[0];
-      const AXIS_WIDTH = 68; // px — width of right price axis column
+      const AXIS_WIDTH = 70;
       const touchX = touch.clientX - rect.left;
 
       if (touchX > rect.width - AXIS_WIDTH) {
-        // Touch on price axis zone — capture for vertical scale drag
-        // preventDefault stops the page from scrolling but does NOT stop LWC
         e.preventDefault();
-        const curOpts = chart.priceScale('right').options() as any;
+        const range = getVisiblePriceRange();
+        if (!range) return;
         priceAxisTouch = {
-          startY: touch.clientY,
-          startMarginTop:    curOpts?.scaleMargins?.top    ?? 0.08,
-          startMarginBottom: curOpts?.scaleMargins?.bottom ?? 0.22,
+          startY:      touch.clientY,
+          centerPrice: range.center,
+          halfRange:   range.half,
+          lastY:       touch.clientY,
+          lastTime:    Date.now(),
         };
       }
-      // For chart body: do NOT call stopPropagation — LWC needs the event for panning
+      // Chart body: no stopPropagation — LWC handles horizontal pan
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if (priceAxisTouch && e.touches.length === 1) {
-        // We own this touch — scale the price axis
-        e.preventDefault();
-        const rect = containerRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const deltaY = (e.touches[0].clientY - priceAxisTouch.startY) / rect.height;
-        // Up = zoom in (tighten margins so candles appear larger)
-        // Down = zoom out (widen margins to show more price range)
-        const sensitivity = 0.2;
-        const newTop    = Math.max(0,    Math.min(0.45, priceAxisTouch.startMarginTop    + deltaY * sensitivity));
-        const newBottom = Math.max(0.05, Math.min(0.55, priceAxisTouch.startMarginBottom - deltaY * sensitivity));
-        chart.priceScale('right').applyOptions({ scaleMargins: { top: newTop, bottom: newBottom } });
-        return;
-      }
-      // Chart body: do NOT call stopPropagation — LWC handles horizontal drag for panning
+      if (!priceAxisTouch || e.touches.length !== 1) return;
+      e.preventDefault();
+
+      const touch     = e.touches[0];
+      const deltaY    = touch.clientY - priceAxisTouch.startY;
+      priceAxisTouch.lastY    = touch.clientY;
+      priceAxisTouch.lastTime = Date.now();
+
+      // Exponential zoom: each pixel of drag multiplies the range by a factor
+      // Positive deltaY = drag DOWN = zoom out (show more price range)
+      // Negative deltaY = drag UP = zoom in (show less price range)
+      const PIXELS_PER_DOUBLE = 80; // pixels to drag to double/halve the range
+      const zoomFactor  = Math.pow(2, deltaY / PIXELS_PER_DOUBLE);
+      const newHalfRange = Math.max(
+        priceAxisTouch.centerPrice * 0.0001,  // minimum zoom (0.01% of price)
+        priceAxisTouch.halfRange * zoomFactor
+      );
+
+      // New range centered on where the drag started
+      const newMin = priceAxisTouch.centerPrice - newHalfRange;
+      const newMax = priceAxisTouch.centerPrice + newHalfRange;
+      applyPriceRange(newMin, newMax);
     };
 
     const onTouchEnd = () => { priceAxisTouch = null; };
 
+    // Also handle MOUSE drag on price axis (desktop) — same TradingView approach
+    let mouseAxisDrag: PriceAxisState | null = null;
+
+    const onMouseDownAxis = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const AXIS_WIDTH = 70;
+      if (e.clientX < rect.right - AXIS_WIDTH) return; // only on axis
+      e.preventDefault();
+      e.stopPropagation();
+      const range = getVisiblePriceRange();
+      if (!range) return;
+      mouseAxisDrag = {
+        startY:      e.clientY,
+        centerPrice: range.center,
+        halfRange:   range.half,
+        lastY:       e.clientY,
+        lastTime:    Date.now(),
+      };
+    };
+
+    const onMouseMoveAxis = (e: MouseEvent) => {
+      if (!mouseAxisDrag) return;
+      const deltaY = e.clientY - mouseAxisDrag.startY;
+      const PIXELS_PER_DOUBLE = 80;
+      const zoomFactor  = Math.pow(2, deltaY / PIXELS_PER_DOUBLE);
+      const newHalfRange = Math.max(mouseAxisDrag.centerPrice * 0.0001, mouseAxisDrag.halfRange * zoomFactor);
+      const newMin = mouseAxisDrag.centerPrice - newHalfRange;
+      const newMax = mouseAxisDrag.centerPrice + newHalfRange;
+      applyPriceRange(newMin, newMax);
+    };
+
+    const onMouseUpAxis = () => { mouseAxisDrag = null; };
+
+    // Double-click price axis to reset autoScale
+    const onDblClickAxis = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      if (e.clientX < rect.right - 70) return;
+      resetPriceScale();
+    };
+
+    document.addEventListener('mousemove', onMouseMoveAxis);
+    document.addEventListener('mouseup',   onMouseUpAxis);
+
     el.addEventListener('touchstart', onTouchStart, { passive: false });
     el.addEventListener('touchmove',  onTouchMove,  { passive: false });
     el.addEventListener('touchend',   onTouchEnd,   { passive: true });
+    el.addEventListener('mousedown',  onMouseDownAxis);
+    el.addEventListener('dblclick',   onDblClickAxis);
 
     const ro = new ResizeObserver(() => {
       if (containerRef.current)
@@ -212,10 +314,14 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
 
     return () => {
       ro.disconnect();
-      el.removeEventListener('wheel', preventScroll);
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove',  onTouchMove);
-      el.removeEventListener('touchend',   onTouchEnd);
+      el.removeEventListener('wheel',     preventScroll);
+      el.removeEventListener('touchstart',onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend',  onTouchEnd);
+      el.removeEventListener('mousedown', onMouseDownAxis);
+      el.removeEventListener('dblclick',  onDblClickAxis);
+      document.removeEventListener('mousemove', onMouseMoveAxis);
+      document.removeEventListener('mouseup',   onMouseUpAxis);
       chart.remove();
       chartRef.current = null; candleRef.current = null; volumeRef.current = null;
     };
