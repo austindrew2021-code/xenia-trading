@@ -14,6 +14,7 @@ import { DiscoverPage } from './pages/DiscoverPage';
 import { SpotTradingPage } from './pages/SpotTradingPage';
 import { P2PPage } from './pages/P2PPage';
 import { EarnPage } from './pages/EarnPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { HomePage } from './pages/HomePage';
 import { calcRSI, calcStochastic, calcATR } from './bots/indicators';
 import { BuySellPressure } from './components/BuySellPressure';
@@ -21,7 +22,7 @@ import { Side } from './types';
 import { TouchGrassModal, TouchGrassActive, useTouchGrass } from './components/TouchGrassMode';
 import { PnlShareCard } from './components/PnlShareCard';
 
-type Page = 'home' | 'trade' | 'spot' | 'markets' | 'p2p' | 'earn' | 'discover';
+type Page = 'home' | 'trade' | 'spot' | 'markets' | 'p2p' | 'earn' | 'discover' | 'settings';
 type SubNav = { tab?: string; rightTab?: string; discoverTab?: string; earnTab?: string };
 
 // ── Asset Selector ──────────────────────────────────────────────────────────
@@ -295,15 +296,16 @@ const NAV_ICONS: Record<Page, (active:boolean)=>React.ReactNode> = {
   earn:     (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
   spot:     (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>,
   p2p:      (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>,
+  settings: (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>,
 };
 
 function MobileNav({ page, setPage }: { page:Page; setPage:(p:Page)=>void }) {
   const items: {id:Page;label:string}[] = [
-    {id:'home',    label:'Home'},
-    {id:'trade',   label:'Trade'},
-    {id:'spot',    label:'Spot'},
-    {id:'markets', label:'Markets'},
-    {id:'earn',    label:'Earn'},
+    {id:'home',     label:'Home'},
+    {id:'trade',    label:'Leverage'},
+    {id:'spot',     label:'Spot'},
+    {id:'markets',  label:'Markets'},
+    {id:'settings', label:'Settings'},
   ];
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#0B0E14]/96 backdrop-blur-sm border-t border-white/[0.06] flex md:hidden">
@@ -416,11 +418,11 @@ export default function App() {
 
   const desktopNavItems: {id:Page;label:string}[] = [
     {id:'home',    label:'Home'},
-    {id:'trade',   label:'Trade'},
+    {id:'trade',   label:'Leverage'},
+    {id:'spot',    label:'Spot'},
     {id:'markets', label:'Markets'},
-    {id:'p2p',     label:'P2P'},
-    {id:'earn',    label:'Earn'},
     {id:'discover',label:'Discover'},
+    {id:'earn',    label:'Earn'},
   ];
 
   return (
@@ -459,6 +461,9 @@ export default function App() {
 
           <div className="ml-auto flex items-center gap-2">
             <LiveMockToggle/>
+            <button onClick={()=>setPage('settings')} className={`p-1.5 rounded-xl border transition-all ${page==='settings'?'border-[#2BFFF1]/30 text-[#2BFFF1]':'border-white/[0.07] text-[#4B5563] hover:text-[#A7B0B7] hover:border-white/[0.15]'}`} title="Settings">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            </button>
             <PointsBadge/>
             {user ? (
               <>
@@ -496,6 +501,7 @@ export default function App() {
         {page==='earn'&&<div className="overflow-y-auto h-full pb-16"><EarnPage/></div>}
         {page==='spot'&&<SpotTradingPage isMock={spotMock} onToggleMock={()=>setSpotMock(m=>!m)}/>}
         {page==='discover'&&<DiscoverPage initialTab={discoverTab}/>}
+        {page==='settings'&&<div className="overflow-y-auto h-full pb-16"><SettingsPage onNavigate={handleNavigate}/></div>}
       </div>
 
       {/* ── Desktop layout ── */}
@@ -505,6 +511,7 @@ export default function App() {
         {page==='spot'&&<div className="flex-1 overflow-hidden"><SpotTradingPage isMock={spotMock} onToggleMock={()=>setSpotMock(m=>!m)}/></div>}
         {page==='earn'&&<div className="flex-1 overflow-y-auto"><EarnPage/></div>}
         {page==='discover'&&<div className="flex-1 overflow-hidden"><DiscoverPage initialTab={discoverTab}/></div>}
+        {page==='settings'&&<div className="flex-1 overflow-y-auto"><SettingsPage onNavigate={handleNavigate}/></div>}
         {page==='markets'&&<div className="flex-1 overflow-hidden"><MarketsPage onTrade={handleChangeAsset} favourites={favs} onToggleFav={toggleFav}/></div>}
         {page==='trade'&&(
           <div className="flex flex-col flex-1 overflow-hidden px-4 pt-3 pb-3 gap-3">
