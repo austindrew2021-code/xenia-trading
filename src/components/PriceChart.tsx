@@ -144,23 +144,6 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     candleRef.current = candleSeries;
     volumeRef.current = volumeSeries;
 
-    // ── Critical: set touchAction on LWC's internal canvas ────────────
-    // CSS touchAction does NOT inherit to children, so our wrapper div's
-    // touchAction:'none' doesn't reach LWC's canvas element.
-    // We must set it directly so the browser doesn't intercept vertical swipes.
-    const lwcCanvas = containerRef.current?.querySelector('canvas');
-    if (lwcCanvas) {
-      (lwcCanvas as HTMLElement).style.touchAction = 'none';
-    }
-    // Also observe for canvas being added asynchronously (LWC may defer it)
-    const canvasObserver = new MutationObserver(() => {
-      const c = containerRef.current?.querySelector('canvas');
-      if (c) (c as HTMLElement).style.touchAction = 'none';
-    });
-    if (containerRef.current) {
-      canvasObserver.observe(containerRef.current, { childList: true, subtree: true });
-    }
-
     // Block page wheel scroll inside the chart area
     const el = containerRef.current;
     const stopWheel = (e: WheelEvent) => e.stopPropagation();
@@ -174,7 +157,6 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
 
     return () => {
       ro.disconnect();
-      canvasObserver.disconnect();
       el.removeEventListener('wheel', stopWheel);
       chart.remove();
       chartRef.current = null; candleRef.current = null; volumeRef.current = null;
@@ -236,10 +218,26 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
       candleRef.current.applyOptions({ autoscaleInfoProvider: undefined });
     };
 
-    // Touch (mobile) — no passive so we can preventDefault to block page scroll
-    const onTouchStart = (e: TouchEvent) => { e.preventDefault(); onStart(e.touches[0].clientY); };
-    const onTouchMove  = (e: TouchEvent) => { e.preventDefault(); onMove(e.touches[0].clientY); };
-    const onTouchEnd   = () => onEnd();
+    // Touch (mobile) — 2-finger drag on price axis = zoom
+    // 1-finger anywhere falls through to LWC for free chart panning
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length < 2) return; // 1-finger: let LWC handle chart pan
+      e.preventDefault();
+      // Use midpoint Y of both fingers as the drag anchor
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      onStart(midY);
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!drag) return;
+      e.preventDefault();
+      const midY = e.touches.length >= 2
+        ? (e.touches[0].clientY + e.touches[1].clientY) / 2
+        : e.touches[0].clientY;
+      onMove(midY);
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) onEnd(); // release when fewer than 2 fingers
+    };
 
     // Mouse (desktop) — the overlay intercepts mouse down on the axis zone
     const onMouseDown  = (e: MouseEvent) => { e.preventDefault(); onStart(e.clientY); };
