@@ -32,3 +32,8 @@ body {
   0%   { transform: translateY(-100%); }
   100% { transform: translateY(100%); }
 }
+
+/* ── Mobile safe area bottom spacer ─────────────────────────────────── */
+.pb-safe {
+  padding-bottom: max(64px, env(safe-area-inset-bottom, 64px));
+}
