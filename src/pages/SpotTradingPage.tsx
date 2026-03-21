@@ -483,7 +483,7 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
 
               {/* Mobile bottom sheet */}
               {showOrderForm&&(
-                <div className="md:hidden fixed inset-x-0 z-50 flex flex-col justify-end" style={{top:0, bottom:'64px'}} onClick={()=>setShowOrder(false)}>
+                <div className="md:hidden fixed inset-x-0 z-[200] flex flex-col justify-end" style={{top:0, bottom:'64px'}} onClick={()=>setShowOrder(false)}>
                   <div
                     className="bg-[#0B0E14] border-t border-white/[0.08] rounded-t-2xl shadow-2xl"
                     style={{
