@@ -8,6 +8,25 @@ import { Candle } from '../types';
 const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
 const MOCK_FEE = 0.0025, LIVE_FEE = 0.0035;
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+// Platform wallet trade — uses internal balance, no external wallet needed
+async function platformWalletTrade(params: {
+  authToken: string; isMock: boolean; side: 'buy'|'sell';
+  amountUsd: number; tokenMint: string; tokenSymbol: string; tokenName: string; priceUsd: number;
+}): Promise<{ success: boolean; message?: string; error?: string }> {
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/platform-wallet-trade`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${params.authToken}` },
+    body: JSON.stringify({
+      action: 'trade', isMock: params.isMock, side: params.side,
+      amountUsd: params.amountUsd, tokenMint: params.tokenMint,
+      tokenSymbol: params.tokenSymbol, tokenName: params.tokenName, priceUsd: params.priceUsd,
+    }),
+  });
+  const d = await r.json();
+  if (!r.ok) return { success: false, error: d.error ?? 'Trade failed' };
+  return { success: true, message: d.message };
+}
 const INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'] as const;
 
 interface Token { mint:string; symbol:string; name:string; priceUsd:number; change24h:number; volume24h:number; mcap:number; logoUri:string; pairAddress:string; }
@@ -129,9 +148,21 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
         setStatus({type:'success',msg:`Mock ${side==='buy'?'bought':'sold'} ${tokOut.toFixed(4)} ${token.symbol}`});
 
       } else {
-        // ── Live trade via Jupiter ─────────────────────────────────
+        // ── Live trade: try platform wallet first, then external wallet ──
+        // Platform wallet = user's internal balance, server-side execution
+        setStatus({type:'success',msg:'Executing via platform wallet…'});
+        const platResult = await platformWalletTrade({
+          authToken, isMock: false, side, amountUsd: amtN,
+          tokenMint: token.mint, tokenSymbol: token.symbol, tokenName: token.name, priceUsd: livePrice,
+        });
+        if (platResult.success) {
+          setStatus({type:'success',msg:platResult.message ?? 'Trade executed via platform wallet'});
+          setAmt(''); setPct(0); onSuccess();
+          setExec(false); return;
+        }
+        // Platform wallet not available (no funds/wallet) — fall back to Phantom
         const phantom = (window as any).solana ?? (window as any).solflare;
-        if(!phantom) throw new Error('No Solana wallet found. Install Phantom or Solflare.');
+        if(!phantom) throw new Error(platResult.error ?? 'No Solana wallet found. Fund your platform wallet or install Phantom.');
         if(!phantom.isConnected) {
           try { await phantom.connect(); } catch(ce:any) { throw new Error('Wallet connection cancelled'); }
         }
@@ -215,7 +246,10 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
 
       {/* Balance */}
       <div className="flex justify-between text-[10px] px-0.5">
-        <span className="text-[#4B5563]">Available ({isMock?'Mock':'Live'})</span>
+        <div className="flex items-center gap-1">
+          <span className="text-[#4B5563]">Available ({isMock?'Mock':'Live'})</span>
+          {!isMock&&<span className="text-[8px] text-[#2BFFF1] bg-[#2BFFF1]/10 px-1 py-0.5 rounded">Platform wallet</span>}
+        </div>
         <span className="font-mono font-bold text-[#F4F6FA]">${balance.toFixed(2)}</span>
       </div>
 
@@ -450,7 +484,10 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
               {/* Mobile bottom sheet */}
               {showOrderForm&&(
                 <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end" onClick={()=>setShowOrder(false)}>
-                  <div className="bg-[#0B0E14] border-t border-white/[0.08] rounded-t-2xl shadow-2xl max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+                  <div
+                    className="bg-[#0B0E14] border-t border-white/[0.08] rounded-t-2xl shadow-2xl"
+                    style={{maxHeight:'88vh', overflowY:'auto', overscrollBehavior:'contain', WebkitOverflowScrolling:'touch'}}
+                    onClick={e=>e.stopPropagation()}>
                     <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
                       <div className="flex items-center gap-2">
                         <TokenImg src={token.logoUri} symbol={token.symbol} size={22}/>
