@@ -1,6 +1,7 @@
+import { SecuritySettings } from '../components/SecuritySettings';
 import { useState } from 'react';
 
-type EarnTab = 'staking' | 'mining' | 'bonuses' | 'coupons' | 'referrals';
+type EarnTab = 'staking' | 'mining' | 'bonuses' | 'coupons' | 'referrals' | 'security';
 
 const STAKING_POOLS = [
   { name:'XEN Flex',   apy:12.5,  lock:'No lock',    min:'100 XEN',  badge:'',        color:'#2BFFF1' },
@@ -35,6 +36,7 @@ export function EarnPage() {
     { id:'bonuses',   label:'Bonuses',   icon:'🎁' },
     { id:'coupons',   label:'Coupons',   icon:'🏷️' },
     { id:'referrals', label:'Referrals', icon:'👥' },
+    { id:'security',   label:'Security',   icon:'🔐' },
   ];
 
   return (
@@ -202,6 +204,13 @@ export function EarnPage() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Security */}
+      {tab === 'security' && (
+        <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] overflow-hidden">
+          <SecuritySettings />
         </div>
       )}
     </div>
