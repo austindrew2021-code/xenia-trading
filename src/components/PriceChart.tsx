@@ -155,13 +155,6 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     candleRef.current = candleSeries;
     volumeRef.current = volumeSeries;
 
-    // Set touchAction:none on LWC's canvas so browser doesn't steal vertical swipes
-    const fixCanvas = () => {
-      const canvases = containerRef.current?.querySelectorAll('canvas');
-      canvases?.forEach(c => { (c as HTMLElement).style.touchAction = 'none'; });
-    };
-    fixCanvas();
-    requestAnimationFrame(fixCanvas); // retry after LWC finishes rendering
 
     // Block page wheel scroll inside the chart area
     const el = containerRef.current;
@@ -470,7 +463,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           className="w-full h-full select-none"
           style={{
             cursor: activeTool !== 'none' ? 'crosshair' : 'default',
-            touchAction: 'none',
+            touchAction: 'pan-x', // pan-x: browser handles hz, LWC handles vertical via JS
             background: activeTheme.background,
           }}
           onMouseDown={handleMouseDown}
