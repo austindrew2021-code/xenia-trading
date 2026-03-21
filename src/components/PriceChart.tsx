@@ -420,35 +420,41 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         </div>
       </div>
 
-      {/* Chart canvas — LWC owns all touch events here, NO interference */}
-      <div
-        ref={containerRef}
-        className="flex-1 min-h-0 select-none"
-        style={{ cursor: activeTool !== 'none' ? 'crosshair' : 'default' }}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onContextMenu={handleContextMenu}
-      />
+      {/* Chart canvas wrapper — relative so overlay positions inside it, NOT over toolbar */}
+      <div className="relative flex-1 min-h-0">
 
-      {/* ── Price axis overlay ────────────────────────────────────────────
-          Sits exactly over the right price axis column. Intercepts only
-          its own touch/mouse events — the chart canvas is completely free.
-          pointer-events:none on the visual, pointer-events:auto on the overlay.
-      ──────────────────────────────────────────────────────────────────── */}
-      <div
-        ref={axisOverlayRef}
-        className="absolute top-0 right-0 bottom-0"
-        style={{
-          width: PRICE_AXIS_WIDTH,
-          cursor: 'ns-resize',   // vertical resize cursor — visual hint
-          zIndex: 10,
-          touchAction: 'none',   // safe: this element owns its touches fully
-          // Transparent — lets price labels show through
-          background: 'transparent',
-        }}
-        title="Drag to zoom price scale • Double-tap to reset"
-      />
+        {/* LWC canvas — touchAction:none required for LWC vertTouchDrag to work */}
+        <div
+          ref={containerRef}
+          className="w-full h-full select-none"
+          style={{
+            cursor: activeTool !== 'none' ? 'crosshair' : 'default',
+            touchAction: 'none',  // LWC needs this to receive all touch events
+          }}
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onContextMenu={handleContextMenu}
+        />
+
+        {/* ── Price axis overlay ──────────────────────────────────────────
+            Positioned INSIDE the canvas wrapper (not over the toolbar).
+            Intercepts touches/mouse on the right price axis column only.
+        ────────────────────────────────────────────────────────────────── */}
+        <div
+          ref={axisOverlayRef}
+          className="absolute top-0 right-0 bottom-0"
+          style={{
+            width: PRICE_AXIS_WIDTH,
+            cursor: 'ns-resize',
+            zIndex: 5,
+            touchAction: 'none',
+            background: 'transparent',
+          }}
+          title="Drag up/down to zoom · Double-tap to reset"
+        />
+
+      </div>
 
       {/* Context menu */}
       {contextMenu && (
