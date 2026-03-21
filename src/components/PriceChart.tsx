@@ -109,11 +109,14 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
       },
       handleScroll: {
         mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: false,
+        pressedMouseMove: true, // click+drag pans chart in all directions on desktop
+        horzTouchDrag: true,    // horizontal swipe pans time axis
+        vertTouchDrag: true,    // vertical swipe pans price axis (up/down to scroll chart)
       },
-      kineticScroll: { touch: false, mouse: false },
+      kineticScroll: {
+        touch: true,  // momentum flick on mobile
+        mouse: false,
+      },
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
@@ -214,7 +217,9 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
       const touchX = touch.clientX - rect.left;
 
       if (touchX > rect.width - AXIS_WIDTH) {
+        // Price axis zone: intercept touch for our custom vertical zoom
         e.preventDefault();
+        e.stopPropagation(); // prevent LWC from also panning when we zoom the axis
         const range = getVisiblePriceRange();
         if (!range) return;
         priceAxisTouch = {
@@ -225,12 +230,13 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           lastTime:    Date.now(),
         };
       }
-      // Chart body: no stopPropagation — LWC handles horizontal pan
+      // Chart body: no preventDefault/stopPropagation — LWC handles all panning
     };
 
     const onTouchMove = (e: TouchEvent) => {
       if (!priceAxisTouch || e.touches.length !== 1) return;
       e.preventDefault();
+      e.stopPropagation(); // we own this event — don't let LWC pan while we're zooming
 
       const touch     = e.touches[0];
       const deltaY    = touch.clientY - priceAxisTouch.startY;
