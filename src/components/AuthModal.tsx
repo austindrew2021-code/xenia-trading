@@ -84,12 +84,57 @@ export function AuthModal({ onClose }: Props) {
   const [showPass, setShowPass] = useState(false);
   const [walletData, setWalletData] = useState<{ mnemonic: string; sol: string } | null>(null);
 
+  const tryBiometric = async () => {
+    setErr(''); setBusy(true);
+    const credId = localStorage.getItem('xenia-biometric-cred');
+    if (!credId) { setErr('No biometric enrolled. Sign in with password first, then enable it in Settings.'); setBusy(false); return; }
+    try {
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          allowCredentials: [{ id: Uint8Array.from(atob(credId), c => c.charCodeAt(0)), type: 'public-key' }],
+          userVerification: 'required',
+          timeout: 60000,
+        },
+      });
+      if (assertion) {
+        // Biometric passed — sign in with stored email/pass from secure storage
+        const storedEmail = localStorage.getItem('xenia-bio-email') ?? '';
+        const storedPass  = localStorage.getItem('xenia-bio-pass') ?? '';
+        if (storedEmail && storedPass) {
+          const e = await signIn(storedEmail, storedPass);
+          if (e) setErr(e); else onClose();
+        } else {
+          setErr('Biometric credential found but no stored login. Sign in with password once.');
+        }
+      }
+    } catch (bioErr: any) {
+      if (bioErr.name === 'NotAllowedError') setErr('Biometric authentication was cancelled.');
+      else setErr('Biometric failed: ' + (bioErr.message ?? 'Unknown error'));
+    }
+    setBusy(false);
+  };
+
+  // After successful password sign-in, store credentials for biometric use
+  const storeForBiometric = (e: string, p: string) => {
+    localStorage.setItem('xenia-bio-email', e);
+    localStorage.setItem('xenia-bio-pass', p);
+  };
+
+  const biometricAvailable = typeof window !== 'undefined' && typeof window.PublicKeyCredential !== 'undefined';
+  const biometricEnrolled  = typeof window !== 'undefined' && !!localStorage.getItem('xenia-biometric-cred');
+
   const submit = async () => {
     setErr(''); setBusy(true);
     if (tab === 'in') {
       const e = await signIn(email, pass);
       if (e) setErr(e);
-      else onClose();
+      else {
+        storeForBiometric(email, pass); // store for future biometric use
+        onClose();
+      }
     } else {
       if (!user.trim())       { setErr('Username required'); setBusy(false); return; }
       if (pass.length < 8)    { setErr('Password must be at least 8 characters'); setBusy(false); return; }
@@ -215,6 +260,22 @@ export function AuthModal({ onClose }: Props) {
           {tab==='up' && (
             <div className="rounded-xl border border-[#2BFFF1]/15 bg-[#2BFFF1]/05 px-3 py-2.5">
               <p className="text-[10px] text-[#2BFFF1]/70">🔑 A dedicated Solana wallet will be auto-created for your account. You will receive a recovery phrase — save it securely.</p>
+            </div>
+          )}
+
+          {tab === 'in' && biometricAvailable && biometricEnrolled && (
+            <button onClick={tryBiometric} disabled={busy}
+              className="w-full py-3 rounded-xl text-sm font-bold transition-all border border-[#2BFFF1]/30 text-[#2BFFF1] hover:bg-[#2BFFF1]/10 flex items-center justify-center gap-2 disabled:opacity-50">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+              Sign in with Face ID / Touch ID
+            </button>
+          )}
+
+          {tab === 'in' && biometricAvailable && biometricEnrolled && (
+            <div className="flex items-center gap-2 my-1">
+              <div className="flex-1 h-px bg-white/[0.06]"/>
+              <span className="text-[10px] text-[#374151]">or</span>
+              <div className="flex-1 h-px bg-white/[0.06]"/>
             </div>
           )}
 
