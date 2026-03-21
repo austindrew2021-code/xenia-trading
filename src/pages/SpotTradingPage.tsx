@@ -298,6 +298,8 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
         </div>
       )}
 
+      {/* Extra space so the button is visible above the mobile nav bar */}
+      <div className="pb-safe"/>
       <button onClick={executeTrade} disabled={executing||!user||amtN<=0||amtN>balance}
         className={`w-full py-3 rounded-xl text-sm font-black transition-all disabled:opacity-40 ${side==='buy'?'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30':'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'}`}>
         {executing?<span className="flex items-center justify-center gap-1.5"><div className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin"/>{isMock?'Simulating…':'Sending…'}</span>
@@ -486,7 +488,14 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
                 <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end" onClick={()=>setShowOrder(false)}>
                   <div
                     className="bg-[#0B0E14] border-t border-white/[0.08] rounded-t-2xl shadow-2xl"
-                    style={{maxHeight:'88vh', overflowY:'auto', overscrollBehavior:'contain', WebkitOverflowScrolling:'touch'}}
+                    style={{
+                      maxHeight:'88vh',
+                      overflowY:'auto',
+                      overscrollBehavior:'contain',
+                      WebkitOverflowScrolling:'touch',
+                      // Ensure content clears the bottom nav bar (64px) + safe area inset
+                      paddingBottom:'env(safe-area-inset-bottom, 0px)',
+                    }}
                     onClick={e=>e.stopPropagation()}>
                     <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
                       <div className="flex items-center gap-2">
