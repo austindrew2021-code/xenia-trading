@@ -234,9 +234,11 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if (!priceAxisTouch || e.touches.length !== 1) return;
+      if (!priceAxisTouch) return;
+      // Work with first touch point regardless of how many fingers are on screen
+      if (e.touches.length < 1) return;
       e.preventDefault();
-      e.stopPropagation(); // we own this event — don't let LWC pan while we're zooming
+      e.stopPropagation(); // we own this — prevent LWC from also panning
 
       const touch     = e.touches[0];
       const deltaY    = touch.clientY - priceAxisTouch.startY;
@@ -306,9 +308,11 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     document.addEventListener('mousemove', onMouseMoveAxis);
     document.addEventListener('mouseup',   onMouseUpAxis);
 
-    el.addEventListener('touchstart', onTouchStart, { passive: false });
-    el.addEventListener('touchmove',  onTouchMove,  { passive: false });
-    el.addEventListener('touchend',   onTouchEnd,   { passive: true });
+    // capture:true ensures our handlers fire BEFORE LWC's own touch handlers
+    // This is critical for the price axis zone: we must intercept first
+    el.addEventListener('touchstart', onTouchStart, { passive: false, capture: true });
+    el.addEventListener('touchmove',  onTouchMove,  { passive: false, capture: true });
+    el.addEventListener('touchend',   onTouchEnd,   { passive: true,  capture: true });
     el.addEventListener('mousedown',  onMouseDownAxis);
     el.addEventListener('dblclick',   onDblClickAxis);
 
@@ -321,9 +325,9 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     return () => {
       ro.disconnect();
       el.removeEventListener('wheel',     preventScroll);
-      el.removeEventListener('touchstart',onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend',  onTouchEnd);
+      el.removeEventListener('touchstart',onTouchStart, { capture: true } as any);
+      el.removeEventListener('touchmove', onTouchMove,  { capture: true } as any);
+      el.removeEventListener('touchend',  onTouchEnd,   { capture: true } as any);
       el.removeEventListener('mousedown', onMouseDownAxis);
       el.removeEventListener('dblclick',  onDblClickAxis);
       document.removeEventListener('mousemove', onMouseMoveAxis);
