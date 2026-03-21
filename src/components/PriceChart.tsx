@@ -144,6 +144,23 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     candleRef.current = candleSeries;
     volumeRef.current = volumeSeries;
 
+    // ── Critical: set touchAction on LWC's internal canvas ────────────
+    // CSS touchAction does NOT inherit to children, so our wrapper div's
+    // touchAction:'none' doesn't reach LWC's canvas element.
+    // We must set it directly so the browser doesn't intercept vertical swipes.
+    const lwcCanvas = containerRef.current?.querySelector('canvas');
+    if (lwcCanvas) {
+      (lwcCanvas as HTMLElement).style.touchAction = 'none';
+    }
+    // Also observe for canvas being added asynchronously (LWC may defer it)
+    const canvasObserver = new MutationObserver(() => {
+      const c = containerRef.current?.querySelector('canvas');
+      if (c) (c as HTMLElement).style.touchAction = 'none';
+    });
+    if (containerRef.current) {
+      canvasObserver.observe(containerRef.current, { childList: true, subtree: true });
+    }
+
     // Block page wheel scroll inside the chart area
     const el = containerRef.current;
     const stopWheel = (e: WheelEvent) => e.stopPropagation();
@@ -157,6 +174,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
 
     return () => {
       ro.disconnect();
+      canvasObserver.disconnect();
       el.removeEventListener('wheel', stopWheel);
       chart.remove();
       chartRef.current = null; candleRef.current = null; volumeRef.current = null;
