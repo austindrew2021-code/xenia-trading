@@ -1,413 +1,284 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../lib/supabase';
 
-type DepositAsset = 'SOL' | 'ETH' | 'BNB' | 'BTC' | 'USDC' | 'USDT';
+type DepositAsset = 'SOL' | 'ETH' | 'BTC' | 'USDC';
 
-// ── BIP39-style word list (256 words, mobile-memorable) ───────────────────
-const WORDS = [
-  'apple','brave','coral','dawn','ember','frost','grape','haven','iris','jade',
-  'kite','lunar','maple','noble','ocean','pearl','quest','river','stone','tidal',
-  'ultra','valor','water','xenon','yield','zenith','amber','blade','crown','drift',
-  'eagle','flame','glade','honor','ivory','jewel','karma','lance','monte','nexus',
-  'orbit','prism','quake','raven','solar','titan','union','vivid','waste','xylon',
-  'yatch','zones','adobe','blaze','cedar','delta','epoch','fauna','ghost','helix',
-  'indie','joust','knave','llama','magic','nerve','ozone','pixel','quill','rover',
-  'sigma','torch','umbra','venom','waltz','xylem','yacht','zebra','agile','bronze',
-  'cyber','disco','elite','forge','gamma','hydro','infra','joker','kneel','latch',
-  'metro','noval','optic','plumb','quirk','radar','swept','topaz','ultra','volts',
-  'wrath','xerox','yield','zonal','ample','bench','chaos','dense','evoke','frame',
-  'globe','house','input','joint','knoll','lemon','manor','north','onset','phase',
-  'quote','reign','shelf','tower','uncle','vault','world','boxer','youth','zaire',
-  'arise','black','clamp','drive','error','flash','grind','hyper','index','jelly',
-  'knock','limit','march','night','oxide','plaid','quart','rhyme','spare','trope',
-  'unify','veins','whisk','exact','yards','zones','abode','bring','climb','dodge',
-  'exist','feast','grail','hurry','image','jaded','knack','lunge','mourn','nudge',
-  'olive','proof','quill','rivet','swamp','touch','usher','visit','worry','exult',
-  'young','zonal','alarm','burst','civic','dwell','equip','flint','grasp','heave',
-  'imply','jarring','kiosk','liner','merit','novel','ought','pivot','query','remix',
-  'swift','trail','uncut','vivid','wider','xylem','yells','zippy','angel','bunny',
-  'chess','disco','earth','fairy','ghost','hints','inkjet','jelly','kitty','liger',
-  'mango','nutty','overt','panda','quirky','rally','spark','tiger','urban','vivid',
-  'wafer','xenon','yummy','zappy','arrow','bliss','curve','depth','eight','fixed',
-];
-
-// Generate a random 12-word mnemonic from the word list
-function generateMnemonic(): string {
-  const arr = new Uint32Array(12);
-  crypto.getRandomValues(arr);
-  return Array.from(arr).map(n => WORDS[n % WORDS.length]).join(' ');
-}
-
-// Derive wallet addresses deterministically from user ID
+// Derive deterministic addresses from user ID (client-side, stable)
 function deriveAddresses(userId: string): Record<string, string> {
   const base = userId.replace(/-/g, '');
   const hexBase = base.slice(0, 40);
-  const b58chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-  const b58 = (seed: string, len: number) => Array.from({length: len}, (_,i) => b58chars[(seed.charCodeAt(i % seed.length) + i * 7) % 58]).join('');
+  const b58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  const b58addr = (seed: string, len: number) =>
+    Array.from({length: len}, (_, i) => b58[Math.abs(seed.charCodeAt(i % seed.length) * (i + 1) * 31) % 58]).join('');
   return {
-    SOL:  b58(base + 'sol', 44),
+    SOL:  b58addr(base + 'sol', 44),
     ETH:  '0x' + (hexBase + '0000000000000000').slice(0, 40),
-    BNB:  '0x' + (hexBase.split('').reverse().join('') + '0000000000000000').slice(0, 40),
-    BTC:  '1' + b58(base + 'btc', 33),
-    USDC: '0x' + (hexBase.slice(0, 20) + hexBase.slice(20).split('').reverse().join('')),
-    USDT: '0x' + ((parseInt(hexBase.slice(0,8), 16) >>> 0).toString(16).padStart(8,'0') + hexBase.slice(8, 40)),
+    BTC:  '1' + b58addr(base + 'btc', 33),
+    USDC: '0x' + (hexBase.slice(0, 20) + hexBase.slice(20).split('').reverse().join('')).slice(0, 40),
   };
+}
+
+// BIP39 wordlist (256 memorable words)
+const WORDS = ['abandon','ability','able','about','above','absent','absorb','abstract','absurd','abuse','access','accident','account','accuse','achieve','acid','acoustic','acquire','across','act','action','actor','actress','actual','adapt','add','addict','address','adjust','admit','adult','advance','advice','aerobic','afford','afraid','again','age','agent','agree','ahead','aim','air','airport','aisle','alarm','album','alcohol','alert','alien','all','alley','allow','almost','alone','alpha','already','also','alter','always','amateur','amazing','among','amount','amused','analyst','anchor','ancient','anger','angle','angry','animal','ankle','announce','annual','another','answer','antenna','antique','anxiety','any','apart','apology','appear','apple','approve','april','arch','arctic','area','arena','argue','arm','armed','armor','army','around','arrange','arrest','arrive','arrow','art','artefact','artist','artwork','ask','aspect','assault','asset','assist','assume','asthma','athlete','atom','attack','attend','attitude','attract','auction','audit','august','aunt','author','auto','autumn','average','awake','aware','away','awesome','awful','awkward','axis','baby','balance','bamboo','banana','banner','barely','bargain','barrel','base','basic','basket','battle','beach','beauty','because','become','beef','before','begin','behave','behind','believe','below','bench','benefit','best','betray','better','between','beyond','bike','bind','biology','bird','birth','bitter','black','blade','blame','blanket','blast','bleak','bless','blind','blood','blossom','blouse','blue','blur','blush','board','boat','body','boil','bomb','bone','book','boost','border','boring','borrow','boss','bottom','bounce','box','boy','bracket','brain','brand','brave','bread','breeze','brick','bridge','brief','bright','bring','brisk','broccoli','broken','bronze','broom','brother','brown','brush','bubble','buddy','budget','buffalo','build','bulb','bulk','bullet','bundle','bunker','burden','burger','burst','bus'];
+
+function generateMnemonic(userId: string): string {
+  // Generate from user ID so it's stable (not random each time)
+  const words: string[] = [];
+  for (let i = 0; i < 12; i++) {
+    let hash = 0;
+    for (let j = 0; j < userId.length; j++) {
+      hash = ((hash << 5) - hash + userId.charCodeAt(j) + i * 137) & 0x7fffffff;
+    }
+    words.push(WORDS[Math.abs(hash) % WORDS.length]);
+  }
+  return words.join(' ');
 }
 
 interface Props { onClose: () => void; }
 
-// ── Auto-scan button — checks for recent transactions to deposit address ──
-function ScanButton({ asset, address, onFound }: {
-  asset: string;
-  address: string;
-  onFound: (amount: number, txHash: string) => void;
-}) {
+// ── Auto-scan button ──────────────────────────────────────────────────────
+function ScanButton({ asset, address, onFound }: { asset: string; address: string; onFound: (amt: number, hash: string) => void }) {
   const [scanning, setScanning] = useState(false);
-  const [msg,      setMsg]      = useState('');
+  const [msg, setMsg] = useState('');
 
   const scan = async () => {
     if (!address || address === '—') return;
-    setScanning(true);
-    setMsg('Scanning…');
+    setScanning(true); setMsg('');
     try {
-      // Use Solscan public API for SOL/SPL transactions
-      if (asset === 'SOL' || asset === 'USDC' || asset === 'USDT') {
-        const r = await fetch(
-          `https://public-api.solscan.io/account/transactions?account=${address}&limit=5`,
-          { headers: { Accept: 'application/json' } }
-        );
+      if (asset === 'SOL') {
+        const r = await fetch(`https://public-api.solscan.io/account/transactions?account=${address}&limit=5`, { headers: { Accept: 'application/json' } });
         if (r.ok) {
           const txs: any[] = await r.json();
           if (txs.length > 0) {
             const tx = txs[0];
             const sig = tx.txHash || tx.signature || '';
-            const lamports = Math.abs(tx.lamport || tx.fee || 0);
+            const lamports = Math.abs(tx.lamport || 0);
             const sol = lamports / 1e9;
-            const usd = sol * 150; // rough SOL price
-            if (sig) {
-              setMsg(`Found tx: ${sig.slice(0,8)}…`);
-              onFound(parseFloat(usd.toFixed(2)), sig);
-              setScanning(false);
-              return;
-            }
+            const usd = +(sol * 150).toFixed(2);
+            if (sig && usd > 0) { onFound(usd, sig); setMsg(`Found: $${usd}`); setScanning(false); return; }
           }
           setMsg('No recent transactions found');
-        } else {
-          setMsg('Scan unavailable — paste tx manually');
-        }
+        } else setMsg('Scan unavailable');
       } else {
-        setMsg('Paste your tx hash manually for EVM/BTC');
+        setMsg('Paste tx hash manually for EVM/BTC');
       }
-    } catch {
-      setMsg('Scan failed — paste tx manually');
-    }
+    } catch { setMsg('Scan failed'); }
     setScanning(false);
-    setTimeout(() => setMsg(''), 4000);
+    setTimeout(() => setMsg(''), 3000);
   };
 
   return (
     <div className="flex items-center gap-2">
       {msg && <span className="text-[10px] text-[#6B7280]">{msg}</span>}
-      <button onClick={scan} disabled={scanning || !address || address==='—'}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border border-[#2BFFF1]/25 text-[#2BFFF1] hover:bg-[#2BFFF1]/10 transition-all disabled:opacity-40">
-        {scanning ? (
-          <><div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/> Scanning…</>
-        ) : (
-          <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg> Auto-scan</>
-        )}
+      <button onClick={scan} disabled={scanning || !address || address === '—'}
+        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold border border-[#2BFFF1]/25 text-[#2BFFF1] hover:bg-[#2BFFF1]/10 transition-all disabled:opacity-40">
+        {scanning ? <><div className="w-2.5 h-2.5 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>Scanning…</> : <>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Scan
+        </>}
       </button>
     </div>
   );
 }
 
 export function WalletDepositModal({ onClose }: Props) {
-  const { user, account, saveAccount, addDeposit, connectWallet } = useAuth();
-  const [tab,        setTab]        = useState<'deposit'|'withdraw'|'wallet'>('deposit');
-  const [asset,      setAsset]      = useState<DepositAsset>('USDC');
-  const [addrs,      setAddrs]      = useState<Record<string,string>>({});
-  const [loading,    setLoading]    = useState(true);
-  const [passphrase, setPassphrase] = useState('');
-  const [showPhrase, setShowPhrase] = useState(false);  // show passphrase modal
-  const [phraseCopied,setPhraseCopied] = useState(false);
-  const [copied,     setCopied]     = useState(false);
-  const [txHash,     setTxHash]     = useState('');
-  const [amount,     setAmount]     = useState('');
-  const [submitting, setSub]        = useState(false);
-  const [depositDone,setDepositDone]= useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [walletMsg,  setWalletMsg]  = useState('');
-  const [useLive,    setUseLive]    = useState(account?.use_real ?? false);
+  const { user, account, saveAccount } = useAuth();
+  const [asset,    setAsset]    = useState<DepositAsset>('SOL');
+  const [addrs,    setAddrs]    = useState<Record<string,string>>({});
+  const [loading,  setLoading]  = useState(true);
+  const [copied,   setCopied]   = useState(false);
+  const [txHash,   setTxHash]   = useState('');
+  const [amount,   setAmount]   = useState('');
+  const [submitting,setSub]     = useState(false);
+  const [done,     setDone]     = useState(false);
+  const [walletTab,setWalletTab]= useState<'deposit'|'withdraw'|'phrase'>('deposit');
+  const initializedRef = useRef(false);
 
+  // ── Load wallet ONCE — never regenerate if already exists ─────────────
   useEffect(() => {
-    if (!user) { setLoading(false); return; }
+    if (!user || initializedRef.current) return;
+    initializedRef.current = true;
 
-    const existing = account?.deposit_wallets as Record<string,string>|undefined;
-    if (existing && Object.keys(existing).length >= 6 && existing['passphrase']) {
-      // Already set up
-      const {passphrase: p, ...walletAddrs} = existing;
-      setAddrs(walletAddrs);
-      setPassphrase(p || '');
+    const existing = account?.deposit_wallets as Record<string,string> | undefined;
+
+    if (existing && (existing.SOL || existing.sol)) {
+      // Already set up — just load addresses
+      setAddrs({
+        SOL:  existing.SOL  || existing.sol  || '',
+        ETH:  existing.ETH  || existing.eth  || '',
+        BTC:  existing.BTC  || existing.btc  || '',
+        USDC: existing.USDC || existing.usdc || '',
+      });
       setLoading(false);
     } else {
-      // First time — generate passphrase + addresses
-      const mnemonic = generateMnemonic();
-      const derived  = deriveAddresses(user.id);
-      const toStore  = { passphrase: mnemonic, ...derived };
-      setPassphrase(mnemonic);
+      // First setup — derive deterministically from user ID
+      const derived = deriveAddresses(user.id);
       setAddrs(derived);
-      setShowPhrase(true); // show passphrase once
-      saveAccount({ deposit_wallets: toStore } as any).catch(() => {});
+      saveAccount({ deposit_wallets: derived } as any).catch(() => {});
       setLoading(false);
     }
-  }, [user, account?.deposit_wallets]);
+  }, [user?.id]);
 
   const addr = addrs[asset] ?? '—';
+  const passphrase = user ? generateMnemonic(user.id) : '';
 
-  const handleCopyAddr = () => {
-    navigator.clipboard.writeText(addr).catch(()=>{});
-    setCopied(true); setTimeout(()=>setCopied(false), 1500);
-  };
-
-  const handleCopyPhrase = () => {
-    navigator.clipboard.writeText(passphrase).catch(()=>{});
-    setPhraseCopied(true); setTimeout(()=>setPhraseCopied(false), 2000);
-  };
-
-  const handleModeSwitch = async (live: boolean) => {
-    setUseLive(live);
-    await saveAccount({ use_real: live } as any);
+  const copyAddr = () => {
+    navigator.clipboard.writeText(addr).catch(() => {});
+    setCopied(true); setTimeout(() => setCopied(false), 1500);
   };
 
   const submitDeposit = async () => {
-    if (!amount || !txHash) return;
+    if (!supabase || !user || !amount || !txHash) return;
     setSub(true);
-    await addDeposit(txHash, parseFloat(amount), asset, asset === 'SOL' ? 'Solana' : asset === 'BTC' ? 'Bitcoin' : 'EVM');
-    setDepositDone(true); setSub(false);
+    await supabase.from('deposit_records').upsert({ user_id:user.id, chain:asset, amount_usd:parseFloat(amount), amount_native:parseFloat(amount), tx_hash:txHash, destination:'funding', confirmed:false });
+    setDone(true); setSub(false);
   };
 
-  const connectSol = async () => {
-    setConnecting(true); setWalletMsg('');
-    try {
-      const p = (window as any).solana || (window as any).phantom?.solana;
-      if (!p) { setWalletMsg('Solana wallet not found.'); setConnecting(false); return; }
-      const r = await p.connect();
-      const a = r.publicKey?.toString();
-      if (a) { await connectWallet('sol', a); setWalletMsg(`✓ ${a.slice(0,6)}...${a.slice(-4)}`); }
-    } catch (e:any) { setWalletMsg(e.message || 'Rejected'); }
-    setConnecting(false);
-  };
-
-  const connectEvm = async () => {
-    setConnecting(true); setWalletMsg('');
-    try {
-      const eth = (window as any).ethereum;
-      if (!eth) { setWalletMsg('EVM wallet not found.'); setConnecting(false); return; }
-      const accts = await eth.request({ method:'eth_requestAccounts' });
-      if (accts?.[0]) { await connectWallet('evm', accts[0]); setWalletMsg(`✓ ${accts[0].slice(0,6)}...${accts[0].slice(-4)}`); }
-    } catch (e:any) { setWalletMsg(e.message || 'Rejected'); }
-    setConnecting(false);
-  };
-
-  const mockBal = account?.mock_balance ?? 0;
-  const realBal = account?.real_balance ?? 0;
+  const ASSETS: { id: DepositAsset; label: string; network: string; color: string }[] = [
+    { id:'SOL',  label:'SOL',  network:'Solana',   color:'#9945FF' },
+    { id:'ETH',  label:'ETH',  network:'Ethereum', color:'#627EEA' },
+    { id:'BTC',  label:'BTC',  network:'Bitcoin',  color:'#F7931A' },
+    { id:'USDC', label:'USDC', network:'Solana',   color:'#2775CA' },
+  ];
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75 backdrop-blur-sm px-4">
+    <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm px-3 pb-4 sm:pb-0" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div className="bg-[#0B0E14] border border-white/[0.1] rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
 
-      {/* ── Passphrase reveal modal ── */}
-      {showPhrase && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/80 backdrop-blur-sm px-4">
-          <div className="bg-[#0B0E14] border border-[#F59E0B]/30 rounded-2xl w-full max-w-md p-6 shadow-2xl">
-            <div className="flex items-center gap-2 mb-4">
-              <span className="text-2xl">🔑</span>
-              <h3 className="font-bold text-[#F4F6FA] text-lg">Save Your Recovery Phrase</h3>
-            </div>
-            <p className="text-sm text-[#A7B0B7] mb-4 leading-relaxed">
-              This 12-word phrase is the only way to recover your wallet addresses. Write it down and store it somewhere safe. <span className="text-[#F59E0B] font-semibold">It will not be shown again.</span>
-            </p>
-            <div className="rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/05 p-4 mb-4">
-              <div className="grid grid-cols-3 gap-2">
-                {passphrase.split(' ').map((word, i) => (
-                  <div key={i} className="flex items-center gap-1.5">
-                    <span className="text-[9px] text-[#6B7280] w-4 flex-shrink-0">{i+1}.</span>
-                    <span className="text-sm font-bold text-[#F4F6FA]">{word}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={handleCopyPhrase}
-                className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border transition-all ${phraseCopied ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-white/[0.05] text-[#A7B0B7] border-white/[0.08] hover:border-white/20'}`}>
-                {phraseCopied ? '✓ Copied!' : 'Copy Phrase'}
-              </button>
-              <button onClick={() => setShowPhrase(false)}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30 hover:bg-[#F59E0B]/30 transition-all">
-                I've Saved It →
-              </button>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-white/[0.06]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center font-black text-sm" style={{background:'linear-gradient(135deg,#2BFFF1,#00c4ff)',color:'#05060B'}}>X</div>
+            <div>
+              <p className="text-sm font-black text-[#F4F6FA]">Platform Wallet</p>
+              <p className="text-[10px] text-[#4B5563]">{user?.email ?? 'Not signed in'}</p>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* ── Main modal ── */}
-      <div className="bg-[#0B0E14] border border-white/[0.08] rounded-2xl w-full max-w-md shadow-2xl overflow-hidden max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] sticky top-0 bg-[#0B0E14]">
-          <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="" className="w-6 h-6 rounded-lg" onError={e=>{(e.target as HTMLImageElement).style.display='none'}}/>
-            <span className="font-bold text-[#F4F6FA]">Account & Funds</span>
-          </div>
-          <button onClick={onClose} className="text-[#4B5563] hover:text-[#F4F6FA] text-xl transition-colors">×</button>
+          <button onClick={onClose} className="text-[#4B5563] hover:text-[#A7B0B7] p-1">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
 
-        <div className="p-5">
-          {/* Balance cards + mode toggle */}
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            {[
-              { label:'Mock Balance',   val:mockBal.toFixed(2), sub:'Paper trading',   live:false, color:'#6B7280' },
-              { label:'Real Balance',   val:realBal.toFixed(2), sub:'Deposited funds', live:true,  color:'#2BFFF1' },
-            ].map(b => (
-              <button key={b.label} onClick={() => handleModeSwitch(b.live)}
-                className={`rounded-xl border p-3 text-left transition-all ${useLive===b.live ? 'border-[#2BFFF1]/40 bg-[#2BFFF1]/05' : 'border-white/[0.07] bg-white/[0.02] opacity-55'}`}>
-                <p className="text-[10px] text-[#4B5563] mb-1">{b.label}</p>
-                <p className="text-xl font-bold" style={{ color: useLive===b.live ? b.color : '#F4F6FA' }}>${b.val}</p>
-                <p className="text-[9px] text-[#4B5563] mt-0.5">{b.sub}</p>
-                {useLive===b.live && <p className="text-[9px] text-[#2BFFF1] mt-1 font-semibold">● Active</p>}
-              </button>
-            ))}
-          </div>
-
-          {/* Recovery phrase access */}
-          {passphrase && !showPhrase && (
-            <button onClick={() => setShowPhrase(true)}
-              className="w-full mb-4 py-2 rounded-xl border border-[#F59E0B]/20 bg-[#F59E0B]/05 text-[#F59E0B] text-xs font-semibold hover:bg-[#F59E0B]/10 transition-all">
-              🔑 View recovery phrase
+        {/* Sub-tabs */}
+        <div className="flex border-b border-white/[0.06]">
+          {(['deposit','withdraw','phrase'] as const).map(t => (
+            <button key={t} onClick={() => setWalletTab(t)}
+              className={`flex-1 py-2.5 text-xs font-semibold capitalize transition-all ${walletTab===t?'text-[#2BFFF1] border-b-2 border-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>
+              {t === 'deposit' ? 'Deposit' : t === 'withdraw' ? 'Withdraw' : 'Recovery'}
             </button>
-          )}
+          ))}
+        </div>
 
-          {/* Tabs */}
-          <div className="flex rounded-xl border border-white/[0.07] overflow-hidden mb-5">
-            {([['deposit','Deposit'],['withdraw','Withdraw'],['wallet','Wallets']] as const).map(([t,l]) => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`flex-1 py-2.5 text-xs font-semibold transition-all ${tab===t ? 'bg-[#2BFFF1]/15 text-[#2BFFF1]' : 'text-[#4B5563] hover:text-[#A7B0B7]'}`}>
-                {l}
-              </button>
-            ))}
-          </div>
+        <div className="p-5 space-y-4">
+          {loading ? (
+            <div className="flex items-center justify-center py-8 gap-2 text-[#4B5563]">
+              <div className="w-4 h-4 border-2 border-[#2BFFF1]/20 border-t-[#2BFFF1] rounded-full animate-spin"/>
+              <span className="text-xs">Loading wallet…</span>
+            </div>
+          ) : !user ? (
+            <p className="text-sm text-[#4B5563] text-center py-6">Sign in to access your wallet</p>
+          ) : (
 
-          {/* Deposit */}
-          {tab === 'deposit' && (
-            depositDone ? (
-              <div className="text-center py-8">
-                <div className="text-4xl mb-3">✅</div>
-                <p className="font-bold text-[#F4F6FA] mb-1">Deposit submitted</p>
-                <p className="text-sm text-[#A7B0B7] mb-4">Your balance updates once confirmed on-chain.</p>
-                <button onClick={() => setDepositDone(false)} className="px-4 py-2 rounded-xl text-xs text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/10">Deposit more</button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <p className="text-xs text-[#A7B0B7]">Each account has a unique dedicated address per asset. Send funds there then confirm below.</p>
-                {/* Asset picker */}
-                <div className="flex flex-wrap gap-1.5">
-                  {(['SOL','ETH','BNB','BTC','USDC','USDT'] as DepositAsset[]).map(a => (
-                    <button key={a} onClick={() => setAsset(a)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${asset===a ? 'bg-[#2BFFF1]/15 border-[#2BFFF1]/40 text-[#2BFFF1]' : 'border-white/[0.08] text-[#4B5563] hover:text-[#A7B0B7]'}`}>
-                      {a}
-                    </button>
-                  ))}
+            /* ── DEPOSIT ─────────────────────────────────────────────── */
+            walletTab === 'deposit' ? (
+              done ? (
+                <div className="text-center py-6">
+                  <svg className="mx-auto mb-3 text-green-400" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                  <p className="text-sm font-bold text-[#F4F6FA] mb-1">Deposit submitted</p>
+                  <p className="text-xs text-[#6B7280]">Will be reviewed and credited to your Funding balance.</p>
+                  <button onClick={() => { setDone(false); setTxHash(''); setAmount(''); }} className="mt-4 text-xs text-[#2BFFF1] underline">Submit another</button>
                 </div>
-                {/* Address */}
-                <div>
-                  <p className="text-[10px] text-[#6B7280] mb-1.5">Your {asset} deposit address</p>
-                  {loading ? (
-                    <div className="h-10 rounded-xl bg-[#05060B] border border-white/[0.08] flex items-center px-3 gap-2">
-                      <div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>
-                      <span className="text-xs text-[#4B5563]">Generating your address…</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-start gap-2 rounded-xl border border-white/[0.08] bg-[#05060B] px-3 py-2.5">
-                      <p className="font-mono text-xs text-[#A7B0B7] flex-1 break-all">{addr}</p>
-                      <button onClick={handleCopyAddr}
-                        className={`flex-shrink-0 text-[10px] font-semibold px-2 py-1 rounded-lg transition-all ${copied ? 'text-green-400' : 'text-[#4B5563] hover:text-[#2BFFF1]'}`}>
-                        {copied ? '✓' : 'Copy'}
+              ) : (
+                <>
+                  {/* Asset selector */}
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {ASSETS.map(a => (
+                      <button key={a.id} onClick={() => setAsset(a.id)}
+                        className={`flex flex-col items-center gap-1 py-2.5 rounded-xl border text-center transition-all ${asset===a.id?'border-[#2BFFF1]/40 bg-[#2BFFF1]/10':'border-white/[0.07] bg-white/[0.02] hover:border-white/[0.15]'}`}>
+                        <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black" style={{background:a.color+'25',color:a.color}}>{a.label[0]}</div>
+                        <span className={`text-[10px] font-bold ${asset===a.id?'text-[#2BFFF1]':'text-[#4B5563]'}`}>{a.label}</span>
+                        <span className="text-[8px] text-[#374151]">{a.network}</span>
                       </button>
+                    ))}
+                  </div>
+
+                  {/* Address */}
+                  <div className="rounded-xl bg-[#05060B] border border-white/[0.06] p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[9px] text-[#4B5563] font-semibold uppercase tracking-wide">Your {asset} Address</p>
+                      <ScanButton asset={asset} address={addr} onFound={(a,h)=>{setAmount(String(a));setTxHash(h);}}/>
                     </div>
-                  )}
-                  <p className="text-[9px] text-[#374151] mt-1">This address is unique to your account. Only send {asset} to this address.</p>
+                    <p className="font-mono text-[10px] text-[#F4F6FA] break-all mb-2">{addr}</p>
+                    <button onClick={copyAddr}
+                      className="w-full py-1.5 rounded-lg border border-white/[0.08] text-[10px] font-semibold text-[#A7B0B7] hover:text-[#F4F6FA] hover:border-white/20 transition-all">
+                      {copied ? '✓ Copied' : 'Copy Address'}
+                    </button>
+                  </div>
+
+                  {/* Confirm deposit */}
+                  <div className="space-y-2">
+                    <p className="text-[10px] text-[#4B5563] font-semibold uppercase tracking-wide">Confirm Deposit</p>
+                    <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="Amount (USD)"
+                      className="w-full bg-[#05060B] border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40"/>
+                    <input value={txHash} onChange={e=>setTxHash(e.target.value)} placeholder="Transaction hash / signature"
+                      className="w-full bg-[#05060B] border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40 font-mono"/>
+                    <button onClick={submitDeposit} disabled={submitting||!amount||!txHash}
+                      className="w-full py-2.5 rounded-xl text-sm font-bold bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
+                      {submitting ? 'Submitting…' : 'Confirm Deposit'}
+                    </button>
+                    <p className="text-[9px] text-[#374151] text-center">Minimum $10 · Credited after review</p>
+                  </div>
+                </>
+              )
+            )
+
+            /* ── WITHDRAW ────────────────────────────────────────────── */
+            : walletTab === 'withdraw' ? (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-[#F59E0B]/20 bg-[#F59E0B]/05 px-3 py-2.5">
+                  <p className="text-xs text-[#F59E0B] font-semibold">Withdrawals Coming Soon</p>
+                  <p className="text-[10px] text-[#F59E0B]/60 mt-0.5">On-chain withdrawals will be available at platform launch. Contact support for manual withdrawals.</p>
                 </div>
-                {/* Auto-scan or manual TX hash */}
-                <div className="rounded-xl border border-white/[0.07] bg-[#05060B] p-3 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] text-[#6B7280] font-semibold uppercase tracking-wide">Confirm Deposit</p>
-                    <ScanButton asset={asset} address={addr} onFound={(amt, hash) => { setAmount(String(amt)); setTxHash(hash); }}/>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-[#4B5563] mb-1 block">Amount (USD)</label>
-                    <input type="number" placeholder="Auto-filled after scan" value={amount} onChange={e => setAmount(e.target.value)}
-                      className="w-full bg-[#0B0E14] border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40"/>
-                  </div>
-                  <div>
-                    <label className="text-[10px] text-[#4B5563] mb-1 block">Transaction Signature</label>
-                    <input placeholder="Auto-filled after scan, or paste manually" value={txHash} onChange={e => setTxHash(e.target.value)}
-                      className="w-full bg-[#0B0E14] border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40 font-mono text-[11px]"/>
+                <div className="rounded-xl bg-[#05060B] border border-white/[0.06] p-3">
+                  <p className="text-[9px] text-[#4B5563] mb-1">Balances</p>
+                  <div className="space-y-1">
+                    {[['Mock Balance', `$${(account?.mock_balance??0).toFixed(2)}`], ['Live Balance', `$${(account?.real_balance??0).toFixed(2)}`]].map(([l,v])=>(
+                      <div key={l} className="flex justify-between text-xs"><span className="text-[#6B7280]">{l}</span><span className="font-mono font-bold text-[#F4F6FA]">{v}</span></div>
+                    ))}
                   </div>
                 </div>
-                <button onClick={submitDeposit} disabled={submitting || !amount || !txHash}
-                  className="w-full py-3 rounded-xl font-bold text-sm bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
-                  {submitting ? 'Submitting…' : 'Confirm Deposit'}
-                </button>
-                <p className="text-[9px] text-[#374151] text-center">Minimum $10 · Credited after on-chain confirmation</p>
               </div>
             )
-          )}
 
-          {/* Withdraw */}
-          {tab === 'withdraw' && (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-[#F59E0B]/20 bg-[#F59E0B]/05 p-3">
-                <p className="text-xs text-[#F59E0B]">⚠️ Withdrawals are processed via P2P. Go to P2P → Sell to exchange crypto for fiat, or withdraw directly to your connected wallet.</p>
+            /* ── RECOVERY PHRASE ─────────────────────────────────────── */
+            : (
+              <div className="space-y-3">
+                <div className="rounded-xl border border-red-500/20 bg-red-500/05 px-3 py-2.5">
+                  <p className="text-xs text-red-400 font-semibold">Keep this private</p>
+                  <p className="text-[10px] text-red-400/60 mt-0.5">Never share your recovery phrase. Anyone with it has full access to your wallet.</p>
+                </div>
+                <div className="rounded-xl bg-[#05060B] border border-white/[0.06] p-3">
+                  <p className="text-[9px] text-[#4B5563] font-semibold mb-2 uppercase tracking-wide">12-Word Recovery Phrase</p>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {passphrase.split(' ').map((word, i) => (
+                      <div key={i} className="flex items-center gap-1.5 bg-[#0B0E14] border border-white/[0.06] rounded-lg px-2 py-1.5">
+                        <span className="text-[8px] text-[#374151] w-3">{i+1}.</span>
+                        <span className="text-[10px] font-bold text-[#F4F6FA]">{word}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={() => navigator.clipboard.writeText(passphrase)}
+                  className="w-full py-2 rounded-xl border border-white/[0.08] text-xs font-semibold text-[#A7B0B7] hover:text-[#F4F6FA] hover:border-white/20 transition-all">
+                  Copy Phrase
+                </button>
+                <div className="rounded-xl bg-[#05060B] border border-white/[0.06] p-3">
+                  <p className="text-[9px] text-[#4B5563] font-semibold mb-1.5">Wallet Address (SOL)</p>
+                  <p className="font-mono text-[10px] text-[#2BFFF1] break-all">{addrs.SOL ?? '—'}</p>
+                </div>
               </div>
-              <button className="w-full py-3 rounded-xl bg-[#A78BFA]/15 text-[#A78BFA] border border-[#A78BFA]/25 font-bold text-sm hover:bg-[#A78BFA]/25 transition-all">
-                Go to P2P Exchange
-              </button>
-            </div>
-          )}
-
-          {/* Wallets */}
-          {tab === 'wallet' && (
-            <div className="space-y-3">
-              {account?.sol_address && (
-                <div className="rounded-xl border border-green-500/20 bg-green-500/05 px-3 py-2.5 flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"/>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] text-[#6B7280]">Solana</p>
-                    <p className="text-xs text-[#F4F6FA] font-mono truncate">{account.sol_address}</p>
-                  </div>
-                </div>
-              )}
-              {account?.evm_address && (
-                <div className="rounded-xl border border-green-500/20 bg-green-500/05 px-3 py-2.5 flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"/>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] text-[#6B7280]">EVM</p>
-                    <p className="text-xs text-[#F4F6FA] font-mono truncate">{account.evm_address}</p>
-                  </div>
-                </div>
-              )}
-              <button onClick={connectSol} disabled={connecting}
-                className="w-full py-3 rounded-xl border border-[#9945FF]/30 bg-[#9945FF]/10 text-[#9945FF] text-sm font-semibold hover:bg-[#9945FF]/20 transition-all disabled:opacity-50">
-                {account?.sol_address ? 'Reconnect Solana' : 'Connect Solana Wallet (Phantom/Solflare)'}
-              </button>
-              <button onClick={connectEvm} disabled={connecting}
-                className="w-full py-3 rounded-xl border border-[#F6851B]/30 bg-[#F6851B]/10 text-[#F6851B] text-sm font-semibold hover:bg-[#F6851B]/20 transition-all disabled:opacity-50">
-                {account?.evm_address ? 'Reconnect EVM' : 'Connect MetaMask / EVM Wallet'}
-              </button>
-              {walletMsg && (
-                <div className={`px-3 py-2.5 rounded-xl text-xs ${walletMsg.startsWith('✓') ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                  {walletMsg}
-                </div>
-              )}
-            </div>
+            )
           )}
         </div>
       </div>
