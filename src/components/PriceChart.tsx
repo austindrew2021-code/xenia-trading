@@ -217,9 +217,9 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
       const touchX = touch.clientX - rect.left;
 
       if (touchX > rect.width - AXIS_WIDTH) {
-        // Price axis zone: intercept touch for our custom vertical zoom
-        e.preventDefault();
-        e.stopPropagation(); // prevent LWC from also panning when we zoom the axis
+        // Price axis zone: capture this touch for vertical price scale zoom
+        e.preventDefault();  // block page scroll
+        e.stopPropagation(); // block LWC from also handling this as a chart pan
         const range = getVisiblePriceRange();
         if (!range) return;
         priceAxisTouch = {
@@ -229,16 +229,23 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           lastY:       touch.clientY,
           lastTime:    Date.now(),
         };
+      } else {
+        // Chart body: call preventDefault to stop page scroll, but NOT stopPropagation
+        // so LWC's bubble-phase listener still runs and handles the chart pan
+        e.preventDefault();
       }
-      // Chart body: no preventDefault/stopPropagation — LWC handles all panning
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if (!priceAxisTouch) return;
-      // Work with first touch point regardless of how many fingers are on screen
-      if (e.touches.length < 1) return;
+      // Always preventDefault to stop page from scrolling inside the chart
       e.preventDefault();
-      e.stopPropagation(); // we own this — prevent LWC from also panning
+
+      if (!priceAxisTouch || e.touches.length < 1) {
+        // Chart body touch: no stopPropagation — LWC handles the pan via its bubble listener
+        return;
+      }
+      // Price axis touch: we own this event fully
+      e.stopPropagation();
 
       const touch     = e.touches[0];
       const deltaY    = touch.clientY - priceAxisTouch.startY;
@@ -535,7 +542,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
       <div
         ref={containerRef}
         className="flex-1 min-h-0 select-none"
-        style={{ cursor: activeTool !== 'none' ? 'crosshair' : 'default', touchAction: 'none' }}
+        style={{ cursor: activeTool !== 'none' ? 'crosshair' : 'default', touchAction: 'pan-x' }}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
@@ -585,8 +592,8 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
   );
 
   if (isFullscreen) {
-    return <div className="fixed inset-0 z-[300]" style={{ touchAction:'none' }}>{chartContent}</div>;
+    return <div className="fixed inset-0 z-[300]" style={{ touchAction:'pan-x' }}>{chartContent}</div>;
   }
 
-  return <div className="w-full h-full" style={{ touchAction:'none' }}>{chartContent}</div>;
+  return <div className="w-full h-full" style={{ touchAction:'pan-x' }}>{chartContent}</div>;
 }
