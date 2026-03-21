@@ -49,11 +49,13 @@ function BotCreateCard({ config, onConfirm, onDismiss }: {
   const [saving,   setSaving]   = useState(false);
   const [done,     setDone]     = useState(false);
 
+  const { user: cardUser } = useAuth();
+
   const submit = async () => {
     if (!name.trim()) return;
     setSaving(true);
     await onConfirm(name.trim(), isPublic, feePct);
-    setDone(true);
+    if (cardUser) setDone(true); // only show "done" if actually saved
     setSaving(false);
   };
 
@@ -134,13 +136,18 @@ function BotCreateCard({ config, onConfirm, onDismiss }: {
         </p>
       )}
 
+      {!cardUser && (
+        <div className="rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/08 px-3 py-2 text-[10px] text-[#F59E0B]/80">
+          Sign in first to save this bot to The Lab.
+        </div>
+      )}
       <div className="flex gap-2">
         <button onClick={onDismiss} className="px-3 py-2 rounded-xl border border-white/[0.08] text-[10px] text-[#4B5563] hover:text-[#A7B0B7] transition-all">Cancel</button>
         <button onClick={submit} disabled={saving || !name.trim()}
           className="flex-1 py-2 rounded-xl text-sm font-black bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
           {saving
             ? <span className="flex items-center justify-center gap-2"><div className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin"/>Creating…</span>
-            : 'Create Bot in The Lab'}
+            : cardUser ? 'Create Bot in The Lab' : 'Sign In to Create Bot'}
         </button>
       </div>
     </div>
@@ -226,8 +233,17 @@ export function XeniaBotWidget() {
 
   // Actually save the bot to Supabase
   const createBot = async (name: string, isPublic: boolean, feePct: number) => {
-    if (!supabase || !user || !pendingBot) return;
-    await supabase.from('custom_bots').insert({
+    if (!supabase || !pendingBot) return;
+    if (!user) {
+      // Not signed in — prompt them
+      setMsgs(prev => [...prev, {
+        role: 'assistant',
+        content: "You need to sign in before saving a bot to The Lab. Tap Sign In in the top right, then come back and I will create it for you."
+      }]);
+      setPendingBot(null);
+      return;
+    }
+    const { error } = await supabase.from('custom_bots').insert({
       user_id:         user.id,
       name,
       description:     pendingBot.description ?? '',
@@ -240,8 +256,17 @@ export function XeniaBotWidget() {
       risk_rules:      pendingBot.risk_rules  ?? { max_position_pct: 10 },
       fee_pct:         feePct / 100,
     });
-    // Friendly follow-up message
-    setMsgs(prev => [...prev, { role: 'assistant', content: `"${name}" has been saved to The Lab! Head to The Lab section to deploy it when you're ready. You can edit any settings there too.` }]);
+    if (error) {
+      setMsgs(prev => [...prev, { role: 'assistant', content: `Failed to save: ${error.message}` }]);
+      return;
+    }
+    // Dispatch event so BotLabPage refreshes instantly
+    window.dispatchEvent(new CustomEvent('xenia:bot-created'));
+    // Friendly follow-up
+    setMsgs(prev => [...prev, {
+      role: 'assistant',
+      content: `"${name}" is now in The Lab! Navigate to The Lab section to deploy it. You can edit indicators, TP/SL, and everything else there before going live.`
+    }]);
   };
 
   const dismissBot = () => { setPendingBot(null); };
