@@ -15,6 +15,10 @@ import { SpotTradingPage } from './pages/SpotTradingPage';
 import { P2PPage } from './pages/P2PPage';
 import { EarnPage } from './pages/EarnPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { CopyTradePage } from './pages/CopyTradePage';
+import { XeniaBotWidget } from './components/XeniaBot';
+import { ChartSettings, loadChartTheme } from './components/ChartSettings';
+import type { ChartTheme } from './components/ChartSettings';
 import { HomePage } from './pages/HomePage';
 import { calcRSI, calcStochastic, calcATR } from './bots/indicators';
 import { BuySellPressure } from './components/BuySellPressure';
@@ -22,7 +26,7 @@ import { Side } from './types';
 import { TouchGrassModal, TouchGrassActive, useTouchGrass } from './components/TouchGrassMode';
 import { PnlShareCard } from './components/PnlShareCard';
 
-type Page = 'home' | 'trade' | 'spot' | 'markets' | 'p2p' | 'earn' | 'discover' | 'settings';
+type Page = 'home' | 'trade' | 'spot' | 'markets' | 'p2p' | 'earn' | 'discover' | 'settings' | 'copy';
 type SubNav = { tab?: string; rightTab?: string; discoverTab?: string; earnTab?: string };
 
 // ── Asset Selector ──────────────────────────────────────────────────────────
@@ -306,6 +310,7 @@ const NAV_ICONS: Record<Page, (active:boolean)=>React.ReactNode> = {
   discover: (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>,
   earn:     (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
   spot:     (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>,
+  copy:     (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>,
   p2p:      (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>,
   settings: (a) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={a?'#2BFFF1':'#374151'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>,
 };
@@ -316,6 +321,7 @@ function MobileNav({ page, setPage }: { page:Page; setPage:(p:Page)=>void }) {
     {id:'trade',    label:'Leverage'},
     {id:'spot',     label:'Spot'},
     {id:'markets',  label:'Markets'},
+    {id:'copy',     label:'Copy'},
     {id:'settings', label:'Settings'},
   ];
   return (
@@ -402,6 +408,8 @@ export default function App() {
   const [flash,      setFlash]      = useState(false);
   const [showPnlShare, setShowPnlShare] = useState(false);
   const [spotMock, setSpotMock]       = useState(true);
+  const [chartTheme, setChartTheme]   = useState<ChartTheme>(loadChartTheme);
+  const [showChartSettings, setShowChartSettings] = useState(false);
   const [quickTP, setQuickTP] = useState<number|null>(null);
   const [quickSL, setQuickSL] = useState<number|null>(null);
   const { showModal: showTG, grassActive, handleActivate: tgActivate, handleSkip: tgSkip, handleDeactivate: tgDeactivate } = useTouchGrass();
@@ -434,6 +442,7 @@ export default function App() {
     {id:'markets', label:'Markets'},
     {id:'discover',label:'Discover'},
     {id:'earn',    label:'Earn'},
+    {id:'copy',    label:'Copy'},
   ];
 
   return (
@@ -513,6 +522,7 @@ export default function App() {
         {page==='spot'&&<SpotTradingPage isMock={spotMock} onToggleMock={()=>setSpotMock(m=>!m)}/>}
         {page==='discover'&&<DiscoverPage initialTab={discoverTab}/>}
         {page==='settings'&&<div className="overflow-y-auto h-full pb-16"><SettingsPage onNavigate={handleNavigate}/></div>}
+        {page==='copy'&&<div className="overflow-hidden h-full pb-16"><CopyTradePage/></div>}
       </div>
 
       {/* ── Desktop layout ── */}
@@ -523,6 +533,7 @@ export default function App() {
         {page==='earn'&&<div className="flex-1 overflow-y-auto"><EarnPage/></div>}
         {page==='discover'&&<div className="flex-1 overflow-hidden"><DiscoverPage initialTab={discoverTab}/></div>}
         {page==='settings'&&<div className="flex-1 overflow-y-auto"><SettingsPage onNavigate={handleNavigate}/></div>}
+        {page==='copy'&&<div className="flex-1 overflow-hidden"><CopyTradePage/></div>}
         {page==='markets'&&<div className="flex-1 overflow-hidden"><MarketsPage onTrade={handleChangeAsset} favourites={favs} onToggleFav={toggleFav}/></div>}
         {page==='trade'&&(
           <div className="flex flex-col flex-1 overflow-hidden px-4 pt-3 pb-3 gap-3">
@@ -545,7 +556,7 @@ export default function App() {
                     <span className="text-xs font-semibold text-[#A7B0B7]">{asset.label} — {interval}</span>
                     {loading&&<div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>}
                   </div>
-                  <div style={{height:'calc(100% - 28px)'}}><PriceChart candles={candles} livePrice={livePrice} positions={positions} onQuickTP={p=>setQuickTP(p)} onQuickSL={p=>setQuickSL(p)} /></div>
+                  <div style={{height:'calc(100% - 28px)'}}><PriceChart candles={candles} livePrice={livePrice} positions={positions} onQuickTP={p=>setQuickTP(p)} onQuickSL={p=>setQuickSL(p)} theme={chartTheme} onOpenSettings={()=>setShowChartSettings(true)}/></div>
                 </div>
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-3 flex-1 overflow-hidden"><PositionsTable livePrice={livePrice}/></div>
               </div>
@@ -566,6 +577,8 @@ export default function App() {
 
       <MobileNav page={page} setPage={setPage}/>
       {showAuth&&<AuthModal onClose={()=>setShowAuth(false)}/>}
+      {showChartSettings&&<ChartSettings onClose={()=>setShowChartSettings(false)} onThemeChange={t=>{setChartTheme(t);}}/>}
+      <XeniaBotWidget/>
       {showWallet&&<WalletDepositModal onClose={()=>setShowWallet(false)}/>}
       {showPnlShare&&<PnlShareCard onClose={()=>setShowPnlShare(false)}/>}
       <TouchGrassModal show={showTG} onClose={tgSkip} onActivate={tgActivate}/>
