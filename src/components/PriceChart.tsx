@@ -163,37 +163,39 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
       const touch = e.touches[0];
-      const AXIS_WIDTH = 65; // px — width of right price axis
+      const AXIS_WIDTH = 68; // px — width of right price axis column
       const touchX = touch.clientX - rect.left;
 
       if (touchX > rect.width - AXIS_WIDTH) {
-        // Touch started on price axis — intercept for vertical drag scaling
-        e.preventDefault(); // prevent LWC from treating as scroll
-        const scale = chart.priceScale('right').options();
+        // Touch on price axis zone — capture for vertical scale drag
+        // preventDefault stops the page from scrolling but does NOT stop LWC
+        e.preventDefault();
+        const curOpts = chart.priceScale('right').options() as any;
         priceAxisTouch = {
           startY: touch.clientY,
-          startMarginTop: (scale as any).scaleMargins?.top ?? 0.08,
-          startMarginBottom: (scale as any).scaleMargins?.bottom ?? 0.22,
+          startMarginTop:    curOpts?.scaleMargins?.top    ?? 0.08,
+          startMarginBottom: curOpts?.scaleMargins?.bottom ?? 0.22,
         };
-      } else {
-        e.stopPropagation(); // only propagation block inside chart area
       }
+      // For chart body: do NOT call stopPropagation — LWC needs the event for panning
     };
 
     const onTouchMove = (e: TouchEvent) => {
       if (priceAxisTouch && e.touches.length === 1) {
+        // We own this touch — scale the price axis
         e.preventDefault();
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
         const deltaY = (e.touches[0].clientY - priceAxisTouch.startY) / rect.height;
-        // Dragging up = zoom in (shrink margins), down = zoom out (expand margins)
-        const sensitivity = 0.15;
-        const newTop    = Math.max(0,    Math.min(0.4, priceAxisTouch.startMarginTop    + deltaY * sensitivity));
-        const newBottom = Math.max(0.05, Math.min(0.5, priceAxisTouch.startMarginBottom - deltaY * sensitivity));
+        // Up = zoom in (tighten margins so candles appear larger)
+        // Down = zoom out (widen margins to show more price range)
+        const sensitivity = 0.2;
+        const newTop    = Math.max(0,    Math.min(0.45, priceAxisTouch.startMarginTop    + deltaY * sensitivity));
+        const newBottom = Math.max(0.05, Math.min(0.55, priceAxisTouch.startMarginBottom - deltaY * sensitivity));
         chart.priceScale('right').applyOptions({ scaleMargins: { top: newTop, bottom: newBottom } });
         return;
       }
-      e.stopPropagation();
+      // Chart body: do NOT call stopPropagation — LWC handles horizontal drag for panning
     };
 
     const onTouchEnd = () => { priceAxisTouch = null; };
