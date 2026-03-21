@@ -262,7 +262,22 @@ export function BotLabPage() {
     setLoading(false);
   };
 
-  useEffect(()=>{load();},[user]);
+  // Load on mount + when user changes
+  useEffect(()=>{ load(); },[user]);
+
+  // Reload when a bot is created from XeniaBot (custom DOM event)
+  useEffect(()=>{
+    const handler = () => { load(); };
+    window.addEventListener('xenia:bot-created', handler);
+    return () => window.removeEventListener('xenia:bot-created', handler);
+  },[user]);
+
+  // Also reload when the component becomes visible (tab focus / navigation)
+  useEffect(()=>{
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  },[user]);
 
   const save = async (data:any) => {
     if(!supabase||!user) return;
