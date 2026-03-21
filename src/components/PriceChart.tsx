@@ -149,12 +149,58 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     candleRef.current = candleSeries;
     volumeRef.current = volumeSeries;
 
-    // Block page scroll ONLY while pointer is inside chart canvas
+    // Block page scroll when inside chart canvas
     const el = containerRef.current;
     const preventScroll = (e: WheelEvent) => { e.stopPropagation(); };
-    const preventTouchScroll = (e: TouchEvent) => { e.stopPropagation(); };
     el.addEventListener('wheel', preventScroll, { passive: false });
-    el.addEventListener('touchmove', preventTouchScroll, { passive: false });
+
+    // ── Custom touch handler for price axis drag (right ~60px) ──────────
+    // lightweight-charts doesn't route touch events to price scale natively,
+    // so we implement vertical-drag-to-zoom manually for that region.
+    let priceAxisTouch: { startY: number; startMarginTop: number; startMarginBottom: number } | null = null;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const touch = e.touches[0];
+      const AXIS_WIDTH = 65; // px — width of right price axis
+      const touchX = touch.clientX - rect.left;
+
+      if (touchX > rect.width - AXIS_WIDTH) {
+        // Touch started on price axis — intercept for vertical drag scaling
+        e.preventDefault(); // prevent LWC from treating as scroll
+        const scale = chart.priceScale('right').options();
+        priceAxisTouch = {
+          startY: touch.clientY,
+          startMarginTop: (scale as any).scaleMargins?.top ?? 0.08,
+          startMarginBottom: (scale as any).scaleMargins?.bottom ?? 0.22,
+        };
+      } else {
+        e.stopPropagation(); // only propagation block inside chart area
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (priceAxisTouch && e.touches.length === 1) {
+        e.preventDefault();
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const deltaY = (e.touches[0].clientY - priceAxisTouch.startY) / rect.height;
+        // Dragging up = zoom in (shrink margins), down = zoom out (expand margins)
+        const sensitivity = 0.15;
+        const newTop    = Math.max(0,    Math.min(0.4, priceAxisTouch.startMarginTop    + deltaY * sensitivity));
+        const newBottom = Math.max(0.05, Math.min(0.5, priceAxisTouch.startMarginBottom - deltaY * sensitivity));
+        chart.priceScale('right').applyOptions({ scaleMargins: { top: newTop, bottom: newBottom } });
+        return;
+      }
+      e.stopPropagation();
+    };
+
+    const onTouchEnd = () => { priceAxisTouch = null; };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove',  onTouchMove,  { passive: false });
+    el.addEventListener('touchend',   onTouchEnd,   { passive: true });
 
     const ro = new ResizeObserver(() => {
       if (containerRef.current)
@@ -165,7 +211,9 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     return () => {
       ro.disconnect();
       el.removeEventListener('wheel', preventScroll);
-      el.removeEventListener('touchmove', preventTouchScroll);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove',  onTouchMove);
+      el.removeEventListener('touchend',   onTouchEnd);
       chart.remove();
       chartRef.current = null; candleRef.current = null; volumeRef.current = null;
     };
