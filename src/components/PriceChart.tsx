@@ -6,12 +6,17 @@ import {
 } from 'lightweight-charts';
 import { Candle } from '../types';
 
+import type { ChartTheme } from './ChartSettings';
+import { loadChartTheme } from './ChartSettings';
+
 interface Props {
   candles: Candle[];
   livePrice: number;
   positions: { entryPrice: number; side: string; status: string }[];
   onQuickTP?: (price: number) => void;
   onQuickSL?: (price: number) => void;
+  theme?: ChartTheme;
+  onOpenSettings?: () => void;
 }
 
 function getPriceFormat(price: number) {
@@ -39,7 +44,7 @@ interface ContextMenu { x: number; y: number; price: number; }
 // Width of the right price axis column in pixels
 const PRICE_AXIS_WIDTH = 70;
 
-export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL }: Props) {
+export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL, theme, onOpenSettings }: Props) {
   const wrapperRef     = useRef<HTMLDivElement>(null);
   const containerRef   = useRef<HTMLDivElement>(null);
   // Overlay div that sits exactly on top of the price axis — intercepts its touch events
@@ -67,28 +72,31 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     return getPriceFormat(avg || livePrice);
   }, [candles, livePrice]);
 
+  // Active theme — prop takes priority, fallback to localStorage
+  const activeTheme = theme ?? loadChartTheme();
+
   useEffect(() => {
     if (!containerRef.current) return;
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#05060B' },
-        textColor: '#4B5563',
+        background: { type: ColorType.Solid, color: activeTheme.background },
+        textColor: activeTheme.textColor,
         fontFamily: '-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: 'rgba(255,255,255,0.025)' },
-        horzLines: { color: 'rgba(255,255,255,0.025)' },
+        vertLines: { color: activeTheme.gridLines },
+        horzLines: { color: activeTheme.gridLines },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: 'rgba(43,255,241,0.4)', labelBackgroundColor: '#0B0E14' },
-        horzLine: { color: 'rgba(43,255,241,0.4)', labelBackgroundColor: '#0B0E14' },
+        vertLine: { color: activeTheme.crosshair, labelBackgroundColor: activeTheme.background },
+        horzLine: { color: activeTheme.crosshair, labelBackgroundColor: activeTheme.background },
       },
       rightPriceScale: {
         borderColor: 'rgba(255,255,255,0.06)',
-        textColor: '#6B7280',
+        textColor: activeTheme.textColor,
         scaleMargins: { top: 0.08, bottom: 0.22 },
         autoScale: true,
         mode: PriceScaleMode.Normal,
@@ -116,13 +124,16 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor:'#4ADE80', downColor:'#F87171',
-      borderUpColor:'#4ADE80', borderDownColor:'#F87171',
-      wickUpColor:'#22C55E', wickDownColor:'#EF4444',
+      upColor:       activeTheme.upColor,
+      downColor:     activeTheme.downColor,
+      borderUpColor: activeTheme.upBorder,
+      borderDownColor:activeTheme.downBorder,
+      wickUpColor:   activeTheme.upWick,
+      wickDownColor: activeTheme.downWick,
       priceFormat: { type:'price', precision:8, minMove:0.00000001 },
     });
     const volumeSeries = chart.addSeries(HistogramSeries, {
-      color:'rgba(43,255,241,0.15)', priceFormat:{ type:'volume' }, priceScaleId:'volume',
+      color: activeTheme.volumeUp, priceFormat:{ type:'volume' }, priceScaleId:'volume',
     });
     chart.priceScale('volume').applyOptions({ scaleMargins:{ top:0.82, bottom:0 } });
 
@@ -143,6 +154,14 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     chartRef.current  = chart;
     candleRef.current = candleSeries;
     volumeRef.current = volumeSeries;
+
+    // Set touchAction:none on LWC's canvas so browser doesn't steal vertical swipes
+    const fixCanvas = () => {
+      const canvases = containerRef.current?.querySelectorAll('canvas');
+      canvases?.forEach(c => { (c as HTMLElement).style.touchAction = 'none'; });
+    };
+    fixCanvas();
+    requestAnimationFrame(fixCanvas); // retry after LWC finishes rendering
 
     // Block page wheel scroll inside the chart area
     const el = containerRef.current;
@@ -284,7 +303,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     })));
     volumeRef.current.setData(candles.map(c => ({
       time:(c.time/1000) as any, value:c.volume,
-      color:c.close>=c.open?'rgba(74,222,128,0.2)':'rgba(248,113,113,0.2)',
+      color:c.close>=c.open?activeTheme.volumeUp:activeTheme.volumeDown,
     })));
     chartRef.current?.timeScale().fitContent();
   }, [candles]);
@@ -425,7 +444,13 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         )}
         {hint && <span className="text-[9px] text-[#2BFFF1]/60 ml-1 animate-pulse hidden sm:inline">{hint}</span>}
         <div className="ml-auto flex items-center gap-1.5">
-          <span className="hidden lg:block text-[9px] text-[#2D3748]">Drag price axis ↕ · Double-tap axis to reset</span>
+          <span className="hidden lg:block text-[9px] text-[#2D3748]">Drag axis ↕ to zoom</span>
+          {onOpenSettings && (
+            <button onClick={onOpenSettings}
+              className="p-1.5 rounded-lg text-[#4B5563] hover:text-[#2BFFF1] border border-white/[0.05] hover:border-[#2BFFF1]/30 transition-all" title="Chart settings">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            </button>
+          )}
           <button onClick={() => setIsFullscreen(f => !f)}
             className="p-1.5 rounded-lg text-[#4B5563] hover:text-[#2BFFF1] border border-white/[0.05] hover:border-[#2BFFF1]/30 transition-all">
             {isFullscreen
@@ -445,7 +470,8 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           className="w-full h-full select-none"
           style={{
             cursor: activeTool !== 'none' ? 'crosshair' : 'default',
-            touchAction: 'none',  // LWC needs this to receive all touch events
+            touchAction: 'none',
+            background: activeTheme.background,
           }}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
