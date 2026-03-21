@@ -31,6 +31,8 @@ function AssetSelector({ current, onChange }: { current:string; onChange:(id:str
   const [query, setQuery]     = useState('');
   const [results, setResults] = useState<SearchAsset[]>([]);
   const [srch, setSrch]       = useState(false);
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
@@ -39,11 +41,19 @@ function AssetSelector({ current, onChange }: { current:string; onChange:(id:str
     timer.current = setTimeout(async () => { setSrch(true); setResults(await searchPumpTokens(query)); setSrch(false); }, 400);
   }, [query]);
 
+  const openDropdown = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setDropPos({ top: r.bottom + 6, left: r.left });
+    }
+    setOpen(!open);
+  };
+
   const cur = (TOP_ASSETS as unknown as any[]).find((a: any) => a.id === current);
 
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)}
+      <button ref={btnRef} onClick={openDropdown}
         className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-white/[0.08] bg-white/[0.02] hover:border-white/20 transition-all">
         <span className="text-sm font-bold text-[#F4F6FA]">{cur?.label ?? current}</span>
         <svg className="w-3 h-3 text-[#4B5563]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -52,8 +62,9 @@ function AssetSelector({ current, onChange }: { current:string; onChange:(id:str
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-[299]" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 mt-1.5 w-72 bg-[#0B0E14] border border-white/[0.1] rounded-2xl shadow-2xl z-[300] overflow-hidden">
+          <div className="fixed inset-0 z-[499]" onClick={() => { setOpen(false); setQuery(''); }} />
+          <div className="fixed w-72 bg-[#0B0E14] border border-white/[0.1] rounded-2xl shadow-2xl z-[500] overflow-hidden"
+            style={{ top: dropPos.top, left: dropPos.left }}>
             <div className="p-3 border-b border-white/[0.06]">
               <input autoFocus placeholder="Search Pump.fun / Solana tokens…" value={query}
                 onChange={e => setQuery(e.target.value)}
