@@ -69,22 +69,46 @@ export function SecuritySettings({ onClose }: { onClose?: () => void }) {
           challenge,
           rp:  { name: 'Xenia Trading', id: window.location.hostname },
           user: { id: new TextEncoder().encode(user.id), name: user.email ?? 'user', displayName: (account?.username ?? user.email) ?? 'User' },
-          pubKeyCredParams: [{ alg: -7, type: 'public-key' }, { alg: -257, type: 'public-key' }],
-          authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required' },
+          pubKeyCredParams: [
+            { alg: -7,   type: 'public-key' }, // ES256 (most common)
+            { alg: -257, type: 'public-key' }, // RS256 (Windows Hello)
+            { alg: -8,   type: 'public-key' }, // EdDSA (passkeys)
+          ],
+          authenticatorSelection: {
+            authenticatorAttachment: 'platform', // device biometric, not USB key
+            userVerification: 'required',
+            residentKey: 'preferred',
+          },
           timeout: 60000,
           attestation: 'none',
         },
-      });
+      }) as PublicKeyCredential | null;
+
       if (cred) {
+        // Store credential ID in localStorage so sign-in can use it
+        const rawId = (cred as any).rawId as ArrayBuffer;
+        const credIdB64 = btoa(String.fromCharCode(...new Uint8Array(rawId)));
+        localStorage.setItem('xenia-biometric-cred', credIdB64);
+
         await save({ biometrics_enabled: true });
-        setMsg('✅ Biometric authentication enabled');
+        setMsg('✅ Biometric enrolled — use Face ID / Touch ID on next sign-in');
       }
     } catch (e: any) {
-      setMsg(`❌ ${e.message ?? 'Biometric enrollment failed'}`);
+      if ((e as any).name === 'NotAllowedError') {
+        setMsg('❌ Permission denied. Allow biometrics in your browser settings.');
+      } else if ((e as any).name === 'NotSupportedError') {
+        setMsg('❌ Platform authenticator not supported on this device.');
+      } else {
+        setMsg(`❌ ${e.message ?? 'Biometric enrollment failed'}`);
+      }
     }
   };
 
-  const disableBiometrics = () => save({ biometrics_enabled: false });
+  const disableBiometrics = () => {
+    localStorage.removeItem('xenia-biometric-cred');
+    save({ biometrics_enabled: false });
+    setMsg('Biometric disabled');
+  };
 
   // ── Email 2FA ──────────────────────────────────────────────────────────
   const sendEmailCode = async () => {
