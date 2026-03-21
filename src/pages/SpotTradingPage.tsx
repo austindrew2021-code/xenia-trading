@@ -312,16 +312,20 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
 
       {/* ── Token info strip ─────────────────────────────────────── */}
       {token&&(
-        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-white/[0.05] flex-shrink-0 bg-[#080A10]">
-          <TokenImg src={token.logoUri} symbol={token.symbol} size={22}/>
-          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        <div className="flex flex-col border-b border-white/[0.05] flex-shrink-0 bg-[#080A10]">
+          {/* Row 1: symbol + price + change */}
+          <div className="flex items-center gap-2 px-3 pt-1.5 pb-1">
+            <TokenImg src={token.logoUri} symbol={token.symbol} size={20}/>
             <span className="text-sm font-black text-[#F4F6FA]">{token.symbol}</span>
-            <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${token.change24h>=0?'text-green-400 bg-green-500/10':'text-red-400 bg-red-500/10'}`}>{token.change24h>=0?'+':''}{token.change24h.toFixed(2)}%</span>
+            <span className="text-sm font-black font-mono text-[#F4F6FA] ml-auto">{fmtP(livePrice)}</span>
+            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${token.change24h>=0?'text-green-400 bg-green-500/10':'text-red-400 bg-red-500/10'}`}>
+              {token.change24h>=0?'+':''}{token.change24h.toFixed(2)}%
+            </span>
           </div>
-          <span className="text-sm font-black font-mono text-[#F4F6FA] flex-shrink-0">{fmtP(livePrice)}</span>
-          <div className="flex gap-0.5 ml-1">
+          {/* Row 2: interval buttons */}
+          <div className="flex gap-0.5 px-3 pb-1.5 overflow-x-auto">
             {INTERVALS.map(i=>(
-              <button key={i} onClick={()=>setInterval_(i)} className={`px-1 py-0.5 rounded text-[8px] font-bold transition-all ${interval===i?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#374151] hover:text-[#6B7280]'}`}>{i}</button>
+              <button key={i} onClick={()=>setInterval_(i)} className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all flex-shrink-0 ${interval===i?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#374151] hover:text-[#6B7280]'}`}>{i}</button>
             ))}
           </div>
         </div>
