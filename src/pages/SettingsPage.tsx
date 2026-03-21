@@ -29,6 +29,16 @@ export function SettingsPage({ onNavigate }: Props) {
   const [walletLoading, setWalletLoading] = useState(false);
   const [copied, setCopied]         = useState(false);
 
+  // Notification & sound prefs (localStorage)
+  const [notifPrefs, setNotifPrefs] = useState<Record<string,boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('xenia-notif-prefs') ?? 'null') ?? { liquidated:true, tpsl:true, trade:true, bot:false, sound:false, price:false, news:true }; } catch { return { liquidated:true, tpsl:true, trade:true, bot:false, sound:false, price:false, news:true }; }
+  });
+  const setNotif = (key: string, val: boolean) => {
+    const next = { ...notifPrefs, [key]: val };
+    setNotifPrefs(next);
+    localStorage.setItem('xenia-notif-prefs', JSON.stringify(next));
+  };
+
   const showMsg = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 3000); };
 
   const saveProfile = async () => {
@@ -162,14 +172,14 @@ export function SettingsPage({ onNavigate }: Props) {
                 <Toggle on={account?.use_real ?? false} onChange={v => saveAccount({ use_real: v } as any)}/>
               </Row>
               <Row label="Confirm high leverage orders">
-                <Toggle on={true} onChange={() => {}}/>
-              </Row>
-              <Row label="Show P&L in USD">
-                <Toggle on={true} onChange={() => {}}/>
-              </Row>
-              <Row label="Sound alerts">
-                <Toggle on={false} onChange={() => {}}/>
-              </Row>
+              <Toggle on={notifPrefs.confirmLev ?? true} onChange={v => setNotif('confirmLev', v)}/>
+            </Row>
+            <Row label="Show P&L in USD">
+              <Toggle on={notifPrefs.pnlUsd ?? true} onChange={v => setNotif('pnlUsd', v)}/>
+            </Row>
+            <Row label="Sound alerts">
+              <Toggle on={notifPrefs.sound ?? false} onChange={v => setNotif('sound', v)}/>
+            </Row>
             </div>
           </div>
 
@@ -233,18 +243,12 @@ export function SettingsPage({ onNavigate }: Props) {
         <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
           <h2 className="text-sm font-bold text-[#F4F6FA] mb-3">Notification Preferences</h2>
           <div className="space-y-0">
-            {[
-              ['Position liquidated', true],
-              ['TP/SL triggered', true],
-              ['Trade executed', true],
-              ['Bot signal', false],
-              ['Price alert', false],
-              ['News & announcements', true],
-            ].map(([label, def]) => (
-              <Row key={label as string} label={label as string}>
-                <Toggle on={def as boolean} onChange={() => {}}/>
-              </Row>
-            ))}
+            <Row label="Position liquidated"><Toggle on={notifPrefs.liquidated ?? true} onChange={v=>setNotif('liquidated',v)}/></Row>
+            <Row label="TP/SL triggered"><Toggle on={notifPrefs.tpsl ?? true} onChange={v=>setNotif('tpsl',v)}/></Row>
+            <Row label="Trade executed"><Toggle on={notifPrefs.trade ?? true} onChange={v=>setNotif('trade',v)}/></Row>
+            <Row label="Bot signal"><Toggle on={notifPrefs.bot ?? false} onChange={v=>setNotif('bot',v)}/></Row>
+            <Row label="Price alert"><Toggle on={notifPrefs.price ?? false} onChange={v=>setNotif('price',v)}/></Row>
+            <Row label="News & announcements"><Toggle on={notifPrefs.news ?? true} onChange={v=>setNotif('news',v)}/></Row>
           </div>
           <p className="text-[10px] text-[#374151] mt-3">Push notifications require browser permission when the app is installed as a PWA.</p>
         </div>
