@@ -52,8 +52,8 @@ function AssetSelector({ current, onChange }: { current:string; onChange:(id:str
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-[199]" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 mt-1.5 w-72 bg-[#0B0E14] border border-white/[0.1] rounded-2xl shadow-2xl z-[200] overflow-hidden">
+          <div className="fixed inset-0 z-[299]" onClick={() => setOpen(false)} />
+          <div className="absolute top-full left-0 mt-1.5 w-72 bg-[#0B0E14] border border-white/[0.1] rounded-2xl shadow-2xl z-[300] overflow-hidden">
             <div className="p-3 border-b border-white/[0.06]">
               <input autoFocus placeholder="Search Pump.fun / Solana tokens…" value={query}
                 onChange={e => setQuery(e.target.value)}
@@ -515,7 +515,7 @@ export default function App() {
         {page==='markets'&&<div className="flex-1 overflow-hidden"><MarketsPage onTrade={handleChangeAsset} favourites={favs} onToggleFav={toggleFav}/></div>}
         {page==='trade'&&(
           <div className="flex flex-col flex-1 overflow-hidden px-4 pt-3 pb-3 gap-3">
-            <div className="flex items-center gap-3 flex-shrink-0 flex-wrap">
+            <div className="flex items-center gap-3 flex-shrink-0 flex-wrap relative z-30">
               <AssetSelector current={assetId} onChange={handleChangeAsset}/>
               <div className="flex items-center gap-0.5">
                 {INTERVALS.map(i=>(
