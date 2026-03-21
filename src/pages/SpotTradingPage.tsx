@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useTradingStore } from '../store';
+import { TradeAnimation } from '../components/TradeAnimation';
 import { PriceChart } from '../components/PriceChart';
 import { Candle } from '../types';
 
@@ -112,6 +113,7 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
   const [sl,setSl]           = useState('');
   const [executing,setExec]  = useState(false);
   const [txStatus,setStatus] = useState<{type:'success'|'error';msg:string}|null>(null);
+  const [showAnim,setShowAnim] = useState<{side:'buy'|'sell';symbol:string;amount:string}|null>(null);
 
   // Use mock_balance from account (same as leverage mock balance)
   const balance = account ? (isMock ? account.mock_balance : account.real_balance) : capital;
@@ -220,8 +222,8 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
 
         setStatus({type:'success',msg:`Live buy confirmed! ${txHash.slice(0,8)}…`});
       }
-
-      setAmt(''); setPct(0); onSuccess();
+      setShowAnim({ side, symbol: token.symbol, amount: `$${amtN.toFixed(2)}` });
+      setAmt(''); setPct(0);
     } catch(e:any) { setStatus({type:'error',msg:e.message??'Trade failed'}); }
     setExec(false);
   };
@@ -234,6 +236,8 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
   );
 
   return (
+    <>
+    {showAnim && <TradeAnimation side={showAnim.side} symbol={showAnim.symbol} amount={showAnim.amount} onDone={()=>{ setShowAnim(null); onSuccess(); }}/>}
     <div className="flex flex-col gap-2.5 p-3">
       {/* Buy / Sell */}
       <div className="flex rounded-xl overflow-hidden border border-white/[0.07]">
@@ -305,6 +309,7 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
           :`${side==='buy'?'Buy':'Sell'} ${token.symbol} ${isMock?'· Mock':'· Live'}`}
       </button>
     </div>
+    </>
   );
 }
 
