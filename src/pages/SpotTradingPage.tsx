@@ -112,21 +112,86 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
     setExec(true); setStatus(null);
     try {
       const authToken = await getAuth();
-      const r = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
-        method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
-        body:JSON.stringify({ action:'mock_trade', isMock, inputMint:side==='buy'?USDC_MINT:token.mint, outputMint:side==='buy'?token.mint:USDC_MINT, amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name, priceUsd:livePrice, side }),
-      });
-      const d = await r.json();
-      if(!r.ok) throw new Error(d.error??'Trade failed');
-      // Deduct from account balance locally (same mock_balance as leverage section)
-      if(account && isMock) {
-        const newBal = Math.max(0, account.mock_balance - (side==='buy' ? netUsd : 0));
-        if(side==='buy') saveAccount({ mock_balance: newBal } as any);
-        else saveAccount({ mock_balance: account.mock_balance + (amtN - feeUsd) } as any);
+
+      if(isMock) {
+        // ── Mock trade ─────────────────────────────────────────────
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
+          method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
+          body:JSON.stringify({ action:'mock_trade', isMock:true, inputMint:side==='buy'?USDC_MINT:token.mint, outputMint:side==='buy'?token.mint:USDC_MINT, amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name, priceUsd:livePrice, side }),
+        });
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error??'Trade failed');
+        // Sync mock balance with the account (same pool as leverage mock)
+        if(account) {
+          if(side==='buy') saveAccount({ mock_balance: Math.max(0, account.mock_balance - netUsd) } as any);
+          else saveAccount({ mock_balance: account.mock_balance + (amtN - feeUsd) } as any);
+        }
+        setStatus({type:'success',msg:`Mock ${side==='buy'?'bought':'sold'} ${tokOut.toFixed(4)} ${token.symbol}`});
+
+      } else {
+        // ── Live trade via Jupiter ─────────────────────────────────
+        const phantom = (window as any).solana ?? (window as any).solflare;
+        if(!phantom) throw new Error('No Solana wallet found. Install Phantom or Solflare.');
+        if(!phantom.isConnected) {
+          try { await phantom.connect(); } catch(ce:any) { throw new Error('Wallet connection cancelled'); }
+        }
+        const userWallet = phantom.publicKey?.toBase58?.();
+        if(!userWallet) throw new Error('No wallet connected');
+
+        // Step 1: Get Jupiter quote
+        setStatus({type:'success',msg:'Getting Jupiter quote…'});
+        const qRes = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
+          method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
+          body:JSON.stringify({ action:'quote', inputMint:side==='buy'?USDC_MINT:token.mint, outputMint:side==='buy'?token.mint:USDC_MINT, amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name, priceUsd:livePrice, userWallet, side }),
+        });
+        const { quote, error:qErr } = await qRes.json();
+        if(qErr||!quote) throw new Error(qErr ?? 'Quote failed');
+
+        // Step 2: Build swap transaction
+        setStatus({type:'success',msg:'Building transaction…'});
+        const swapRes = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
+          method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
+          body:JSON.stringify({ action:'swap', quote, inputMint:side==='buy'?USDC_MINT:token.mint, outputMint:side==='buy'?token.mint:USDC_MINT, amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name, priceUsd:livePrice, userWallet, side }),
+        });
+        const { swapTransaction, tradeId, error:swErr } = await swapRes.json();
+        if(swErr||!swapTransaction) throw new Error(swErr ?? 'Swap build failed');
+
+        // Step 3: Sign with wallet
+        setStatus({type:'success',msg:'Sign in your wallet…'});
+        let txBuf: Buffer;
+        try { txBuf = Buffer.from(swapTransaction, 'base64'); } catch { throw new Error('Invalid transaction data'); }
+        
+        // Try VersionedTransaction first, fall back to legacy
+        let tx: any;
+        try {
+          const { VersionedTransaction } = await import('@solana/web3.js') as any;
+          tx = VersionedTransaction.deserialize(txBuf);
+        } catch {
+          const { Transaction } = await import('@solana/web3.js') as any;
+          tx = Transaction.from(txBuf);
+        }
+        const signed = await phantom.signTransaction(tx);
+
+        // Step 4: Send to network
+        setStatus({type:'success',msg:'Broadcasting…'});
+        const { Connection } = await import('@solana/web3.js') as any;
+        const conn = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+        const txHash = await conn.sendRawTransaction(signed.serialize(), { skipPreflight:false, preflightCommitment:'confirmed' });
+        
+        setStatus({type:'success',msg:'Confirming on-chain…'});
+        await conn.confirmTransaction(txHash, 'confirmed');
+
+        // Step 5: Confirm with backend
+        await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
+          method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
+          body:JSON.stringify({ action:'confirm', tradeId, txHash, outputMint:token.mint, tokenSymbol:token.symbol, tokenName:token.name, amountUsd:amtN, priceUsd:livePrice, tokenAmount:tokOut }),
+        });
+
+        setStatus({type:'success',msg:`Live buy confirmed! ${txHash.slice(0,8)}…`});
       }
-      setStatus({type:'success',msg:`${side==='buy'?'Bought':'Sold'} ${tokOut.toFixed(4)} ${token.symbol}`});
+
       setAmt(''); setPct(0); onSuccess();
-    } catch(e:any) { setStatus({type:'error',msg:e.message??'Failed'}); }
+    } catch(e:any) { setStatus({type:'error',msg:e.message??'Trade failed'}); }
     setExec(false);
   };
 
@@ -341,18 +406,21 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
       {/* ══════════ CHART / TRADE TAB ══════════════════════════════ */}
       {tab==='chart'&&(
         // On md+: side-by-side chart + order form. On mobile: chart full width + floating Buy button
-        <div className="flex-1 flex overflow-hidden min-h-0">
+        <div className="flex-1 flex overflow-y-auto md:overflow-hidden min-h-0">
 
-          {/* Chart area */}
-          <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden">
+          {/* Chart area — fixed height on mobile, flex-1 on desktop */}
+          <div className="flex flex-col min-w-0" style={{flex:1,minHeight:0,overflow:'hidden'}}>
             {token?(
               <>
-                <div className="flex-1 min-h-0">
+                <div className="flex-shrink-0 md:flex-1 md:min-h-0" style={{height:'300px',overflow:'hidden'}}
+                  onTouchStart={e=>e.stopPropagation()}>
                   {loadingChart&&candles.length===0
                     ?<div className="h-full flex items-center justify-center gap-2 text-[#4B5563] text-xs"><div className="w-4 h-4 border-2 border-[#2BFFF1]/20 border-t-[#2BFFF1] rounded-full animate-spin"/>Loading…</div>
                     :<PriceChart candles={candles} livePrice={livePrice} positions={[]}/>}
                 </div>
-                <PressureBar token={token} candles={candles}/>
+                <div className="flex-shrink-0 max-h-20 overflow-hidden">
+                  <PressureBar token={token} candles={candles}/>
+                </div>
               </>
             ):(
               <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
