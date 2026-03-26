@@ -42,8 +42,8 @@ export function TradeAnimation({ side, symbol, amount, onDone }: Props) {
 
   useEffect(() => {
     const t1 = setTimeout(() => setPhase('hold'), 100);
-    const t2 = setTimeout(() => setPhase('exit'), 2600);
-    const t3 = setTimeout(onDone, 3200);
+    const t2 = setTimeout(() => setPhase('exit'), 4500);  // hold longer so messages are readable
+    const t3 = setTimeout(onDone, 5300);
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, []);
 
