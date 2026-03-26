@@ -249,10 +249,11 @@ function BotEditor({ bot, onSave, onCancel }:{ bot:Partial<CustomBot>|null; onSa
 // ── Main Lab Page ──────────────────────────────────────────────────────────
 export function BotLabPage() {
   const { user } = useAuth();
-  const [bots,     setBots]    = useState<CustomBot[]>([]);
-  const [loading,  setLoading] = useState(true);
-  const [editing,  setEditing] = useState<Partial<CustomBot>|null|'new'>(null);
-  const [tab,      setTab]     = useState<'lab'|'active'|'market'>('lab');
+  const [bots,        setBots]       = useState<CustomBot[]>([]);
+  const [loading,     setLoading]    = useState(true);
+  const [editing,     setEditing]    = useState<Partial<CustomBot>|null|'new'>(null);
+  const [tab,         setTab]        = useState<'lab'|'active'|'market'>('lab');
+  const [deploying,   setDeploying]  = useState<CustomBot|null>(null);
 
   const load = async () => {
     if(!supabase||!user){setLoading(false);return;}
@@ -289,8 +290,20 @@ export function BotLabPage() {
 
   const activate = async (bot:CustomBot) => {
     if(!supabase) return;
-    const next = bot.status==='lab'||bot.status==='paused'?'active':'paused';
+    if(bot.status === 'lab') {
+      // Show target selector before deploying
+      setDeploying(bot);
+      return;
+    }
+    const next = bot.status==='paused'?'active':'paused';
     await supabase.from('custom_bots').update({status:next}).eq('id',bot.id);
+    await load();
+  };
+
+  const confirmDeploy = async (target: 'spot'|'leverage'|'both') => {
+    if(!supabase||!deploying) return;
+    await supabase.from('custom_bots').update({status:'active', target}).eq('id',deploying.id);
+    setDeploying(null);
     await load();
   };
 
@@ -306,6 +319,39 @@ export function BotLabPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#05060B]">
       {editing!==null&&<BotEditor bot={editing==='new'?{}:editing as Partial<CustomBot>} onSave={save} onCancel={()=>setEditing(null)}/>}
+
+      {/* ── Deploy target picker ─────────────────────────────────── */}
+      {deploying&&(
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" onClick={()=>setDeploying(null)}>
+          <div className="bg-[#0B0E14] border border-white/[0.1] rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4" onClick={e=>e.stopPropagation()}>
+            <div>
+              <p className="text-sm font-black text-[#F4F6FA]">Deploy "{deploying.name}"</p>
+              <p className="text-[10px] text-[#4B5563] mt-0.5">Choose where this bot will trade</p>
+            </div>
+            <div className="space-y-2">
+              {[
+                ['spot',     'Spot Trading',     'Execute spot buys/sells via Jupiter DEX'],
+                ['leverage', 'Leverage Trading', 'Open leveraged positions 1–300×'],
+                ['both',     'Both',             'Active on both spot and leverage'],
+              ].map(([val,label,desc])=>(
+                <button key={val} onClick={()=>confirmDeploy(val as any)}
+                  className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-[#2BFFF1]/40 hover:bg-[#2BFFF1]/05 transition-all text-left group">
+                  <div className="w-8 h-8 rounded-lg bg-[#2BFFF1]/10 border border-[#2BFFF1]/20 flex items-center justify-center flex-shrink-0 group-hover:bg-[#2BFFF1]/20 transition-all">
+                    {val==='spot'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>}
+                    {val==='leverage'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>}
+                    {val==='both'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-[#F4F6FA] group-hover:text-[#2BFFF1] transition-all">{label}</p>
+                    <p className="text-[10px] text-[#4B5563]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button onClick={()=>setDeploying(null)} className="w-full py-2 rounded-xl border border-white/[0.08] text-xs text-[#4B5563] hover:text-[#A7B0B7] transition-all">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06] flex-shrink-0">
