@@ -3,50 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useTradingStore } from '../store';
 
-// ── Active custom bots for spot ───────────────────────────────────────────
-function SpotBotPanel({ isMock }:{ isMock:boolean }) {
-  const { user } = useAuth();
-  const [bots, setBots] = useState<any[]>([]);
-  const [running, setRunning] = useState<Set<string>>(new Set());
 
-  useEffect(()=>{
-    if(!supabase||!user) return;
-    supabase.from('custom_bots')
-      .select('*')
-      .eq('user_id',user.id)
-      .eq('status','active')
-      .in('target',['spot','both'])
-      .then(({data})=>setBots(data??[]));
-  },[user]);
-
-  if(!bots.length) return null;
-
-  const toggleBot = (id:string) => {
-    setRunning(prev=>{
-      const s=new Set(prev);
-      s.has(id)?s.delete(id):s.add(id);
-      return s;
-    });
-  };
-
-  return (
-    <div className="border-t border-white/[0.06] p-3 space-y-2">
-      <p className="text-[9px] text-[#4B5563] font-semibold uppercase tracking-wide">Your Active Spot Bots</p>
-      {bots.map(b=>(
-        <div key={b.id} className="flex items-center justify-between px-2.5 py-2 rounded-xl border border-white/[0.06] bg-white/[0.02]">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold text-[#F4F6FA] truncate">{b.name}</p>
-            <p className="text-[9px] text-[#4B5563]">{b.indicators?.length??0} indicators</p>
-          </div>
-          <button onClick={()=>toggleBot(b.id)}
-            className={`flex-shrink-0 px-2.5 py-1.5 rounded-lg text-[9px] font-bold transition-all border ${running.has(b.id)?'bg-[#2BFFF1]/15 text-[#2BFFF1] border-[#2BFFF1]/30':'border-white/[0.08] text-[#4B5563] hover:text-[#A7B0B7]'}`}>
-            {running.has(b.id)?'Running':'Start'}
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
 import { TradeAnimation } from '../components/TradeAnimation';
 import { PriceChart } from '../components/PriceChart';
 import { Candle } from '../types';
@@ -193,8 +150,10 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
         });
         const d = await r.json();
         if(!r.ok) throw new Error(d.error ?? d.message ?? 'Trade failed');
-        // Edge function already updated mock_balance in DB — re-fetch fresh account data
-        if(supabase && user) {
+        // Use the fresh balance returned by edge function (already updated in DB)
+        if(d.new_mock_balance !== undefined) {
+          saveAccount({ mock_balance: d.new_mock_balance } as any);
+        } else if(supabase && user) {
           const { data: freshAcct } = await supabase.from('trading_accounts').select('mock_balance').eq('user_id', user.id).single();
           if(freshAcct) saveAccount({ mock_balance: freshAcct.mock_balance } as any);
         }
@@ -524,7 +483,6 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
           {/* Desktop order panel */}
           <div className="hidden md:flex w-[240px] lg:w-[260px] flex-shrink-0 border-l border-white/[0.06] flex-col overflow-y-auto bg-[#080A10]">
             <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={()=>{}}/>
-            <SpotBotPanel isMock={isMock}/>
           </div>
 
           {/* Mobile: floating Buy/Sell button + bottom sheet */}
