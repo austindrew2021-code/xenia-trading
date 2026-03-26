@@ -151,17 +151,32 @@ export function AuthModal({ onClose }: Props) {
           const { supabase } = await import('../lib/supabase');
           const { data: { session } } = await supabase!.auth.getSession();
           if (session?.access_token) {
-            const r = await fetch(`${SUPABASE_URL}/functions/v1/generate-deposit-wallets`, {
-              method: 'POST',
-              headers: { 'Content-Type':'application/json', Authorization: `Bearer ${session.access_token}` },
-              body: JSON.stringify({}),
-            });
-            const d = await r.json();
-            if (d.mnemonic && d.sol) {
-              setWalletData({ mnemonic: d.mnemonic, sol: d.sol });
-              setBusy(false);
-              return; // Show passphrase modal before closing
+            const { supabase: sb } = await import('../lib/supabase');
+            // Check if passphrase was already shown for this account
+            const { data: acct } = await sb?.from('trading_accounts')
+              .select('passphrase_shown')
+              .eq('user_id', session.user.id)
+              .single() ?? { data: null };
+
+            if (!acct?.passphrase_shown) {
+              // First time — generate wallet and show passphrase
+              const r = await fetch(`${SUPABASE_URL}/functions/v1/generate-deposit-wallets`, {
+                method: 'POST',
+                headers: { 'Content-Type':'application/json', Authorization: `Bearer ${session.access_token}` },
+                body: JSON.stringify({}),
+              });
+              const d = await r.json();
+              if (d.mnemonic && d.sol) {
+                // Mark as shown immediately so it never appears again
+                await sb?.from('trading_accounts')
+                  .update({ passphrase_shown: true })
+                  .eq('user_id', session.user.id);
+                setWalletData({ mnemonic: d.mnemonic, sol: d.sol });
+                setBusy(false);
+                return; // Show passphrase modal before closing
+              }
             }
+            // Passphrase already shown — go straight to platform
           }
         } catch (walletErr) {
           console.warn('Wallet generation failed:', walletErr);
