@@ -448,6 +448,7 @@ export default function App() {
     {id:'discover',label:'Discover'},
     {id:'earn',    label:'Earn'},
     {id:'copy',    label:'Copy'},
+    {id:'lab',     label:'The Lab'},
   ];
 
   return (
