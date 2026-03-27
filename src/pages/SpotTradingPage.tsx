@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useTradingStore } from '../store';
+import { LabBotPanel } from '../components/LabBotPanel';
 
 
 import { TradeAnimation } from '../components/TradeAnimation';
@@ -483,6 +484,7 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
           {/* Desktop order panel */}
           <div className="hidden md:flex w-[240px] lg:w-[260px] flex-shrink-0 border-l border-white/[0.06] flex-col overflow-y-auto bg-[#080A10]">
             <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={()=>{}}/>
+            <LabBotPanel target="spot" isMock={isMock} compact={true}/>
           </div>
 
           {/* Mobile: floating Buy/Sell button + bottom sheet */}
