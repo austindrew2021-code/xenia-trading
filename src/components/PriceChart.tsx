@@ -6,6 +6,7 @@ import {
 } from 'lightweight-charts';
 import { Candle } from '../types';
 import type { ChartTheme } from './ChartSettings';
+import { ChartIndicatorsMenu } from './ChartIndicatorsMenu';
 import { loadChartTheme } from './ChartSettings';
 
 interface Props {
@@ -73,7 +74,11 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
   const [slPrice,      setSlPrice]      = useState<number|null>(null);
   const [tpSlEnabled,  setTpSlEnabled]  = useState(true);
   // Floating trade panel (fullscreen)
-  const [showTradePanel, setShowTradePanel] = useState(false);
+  const [showIndicators,     setShowIndicators]     = useState(false);
+  const [activeIndicators,   setActiveIndicators]   = useState<string[]>([]);
+  const [showTradePanel,     setShowTradePanel]     = useState(false);
+  // On mobile fullscreen show trade panel too
+  const [mobileTradePanelPos, setMobileTradePanelPos] = useState({ x: 8, y: 60 });
   const [tradePanelPos,  setTradePanelPos]  = useState({ x: 20, y: 80 });
   const [tradeSide,      setTradeSide]      = useState<'buy'|'sell'>('buy');
   const dragPanel = useRef<{ startX:number; startY:number; ox:number; oy:number } | null>(null);
@@ -452,6 +457,14 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           <span className="hidden sm:inline">OB/Liq</span>
         </button>
 
+        {/* Indicators menu button */}
+        <button onClick={()=>setShowIndicators(true)}
+          className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-semibold border border-white/[0.06] bg-white/[0.03] text-[#4B5563] hover:text-[#2BFFF1] hover:border-[#2BFFF1]/30 transition-all">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <span className="hidden sm:inline">Indicators</span>
+          {activeIndicators.length>0&&<span className="ml-0.5 text-[8px] bg-[#2BFFF1]/20 text-[#2BFFF1] rounded px-1">{activeIndicators.length}</span>}
+        </button>
+
         {/* TP/SL toggle */}
         <button onClick={()=>setTpSlEnabled(v=>!v)} className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-semibold border transition-all ${tpSlEnabled?'bg-green-500/15 text-green-400 border-green-500/30':'border-white/[0.06] text-[#4B5563] hover:text-[#A7B0B7]'}`}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="8" x2="21" y2="8"/><line x1="3" y1="16" x2="21" y2="16"/></svg>
@@ -483,7 +496,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
             </button>
           )}
-          {isFullscreen&&onPlaceOrder&&(
+          {onPlaceOrder&&(
             <button onClick={()=>setShowTradePanel(v=>!v)} className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${showTradePanel?'bg-[#2BFFF1]/20 text-[#2BFFF1] border-[#2BFFF1]/40':'border-white/[0.06] text-[#4B5563] hover:text-[#A7B0B7]'}`}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Trade
@@ -519,7 +532,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         />
 
         {/* ── Floating trade panel (fullscreen only) ───────────────── */}
-        {isFullscreen && showTradePanel && onPlaceOrder && (
+        {showTradePanel && onPlaceOrder && (
           <div className="absolute z-20 w-52 bg-[#0B0E14]/95 border border-white/[0.12] rounded-2xl shadow-2xl overflow-hidden"
             style={{ left:tradePanelPos.x, top:tradePanelPos.y }}>
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06] cursor-move" onMouseDown={startPanelDrag}>
@@ -553,7 +566,18 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           </div>
         )}
 
-        {/* Context menu */}
+        {/* Indicators menu */}
+      {showIndicators && (
+        <ChartIndicatorsMenu
+          selected={activeIndicators}
+          onToggle={(id, params) => {
+            setActiveIndicators(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
+          }}
+          onClose={() => setShowIndicators(false)}
+        />
+      )}
+
+      {/* Context menu */}
         {contextMenu&&(
           <>
             <div className="absolute inset-0 z-10" onClick={()=>setContextMenu(null)}/>
