@@ -57,13 +57,25 @@ export function WalletDepositModal({ onClose }: Props) {
   useEffect(() => {
     if (!user || initRef.current) return;
     initRef.current = true;
+    // Use platform_wallet_address (canonical) OR fall back to deposit_wallets
+    const platformAddr = (account as any)?.platform_wallet_address;
     const existing = account?.deposit_wallets as Record<string,string> | undefined;
-    if (existing && (existing.SOL || existing.sol)) {
-      setAddrs({ SOL: existing.SOL||existing.sol||'', ETH: existing.ETH||existing.eth||'', BTC: existing.BTC||existing.btc||'', USDC: existing.USDC||existing.usdc||'' });
-    } else {
-      const derived = deriveAddresses(user.id);
-      setAddrs(derived);
-      saveAccount({ deposit_wallets: derived } as any).catch(() => {});
+    const solAddr = platformAddr || existing?.SOL || existing?.sol || deriveAddresses(user.id).SOL;
+    const derived = deriveAddresses(user.id);
+    setAddrs({ SOL: solAddr, ETH: existing?.ETH||existing?.eth||derived.ETH, BTC: existing?.BTC||existing?.btc||derived.BTC, USDC: existing?.USDC||existing?.usdc||derived.USDC });
+    // If no platform_wallet_address set yet, generate + save
+    if (!platformAddr) {
+      import('../lib/supabase').then(({ supabase: sb }) => {
+        sb?.auth.getSession().then(({ data: { session } }) => {
+          if (!session?.access_token) return;
+          fetch(`${SUPABASE_URL}/functions/v1/generate-deposit-wallets`, {
+            method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${session.access_token}`},
+            body: JSON.stringify({})
+          }).then(r=>r.json()).then(d=>{
+            if(d.sol) setAddrs(prev=>({...prev, SOL:d.sol}));
+          }).catch(()=>{});
+        });
+      });
     }
     setLoading(false);
   }, [user?.id]);
@@ -72,25 +84,31 @@ export function WalletDepositModal({ onClose }: Props) {
 
   const copyAddr = () => { navigator.clipboard.writeText(addr).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); };
 
-  // Auto-scan for SOL deposits
+  // Auto-scan via deposit-monitor edge function (auto-credits balance)
   const scanDeposits = async () => {
-    if (!addr || addr === '—' || asset !== 'SOL') { setDepMsg('Paste your transaction hash to confirm manually'); return; }
-    setScanning(true); setDepMsg('');
+    if (!user) { setDepMsg('Sign in first'); return; }
+    setScanning(true); setDepMsg('Scanning blockchain for deposits…');
     try {
-      const r = await fetch(`https://public-api.solscan.io/account/transactions?account=${addr}&limit=5`, { headers: { Accept: 'application/json' } });
-      if (!r.ok) { setDepMsg('Auto-scan unavailable — paste tx hash below'); setScanning(false); return; }
-      const txs = await r.json();
-      let found = false;
-      for (const tx of (txs ?? []).slice(0, 5)) {
-        const sig = tx.txHash ?? tx.signature ?? '';
-        const lamports = Math.abs(tx.lamport ?? tx.changeAmount ?? 0);
-        if (sig && lamports > 100_000) {
-          const usd = (lamports / 1e9 * 150).toFixed(2);
-          setTxHash(sig); setDepAmount(usd); setDepMsg(`Found deposit: $${usd} SOL — confirm below`); found = true; break;
+      const { supabase: sb } = await import('../lib/supabase');
+      const { data:{ session } } = await sb!.auth.getSession();
+      if (!session?.access_token) { setDepMsg('Session expired, refresh and try again'); setScanning(false); return; }
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/deposit-monitor`, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json', Authorization:`Bearer ${session.access_token}` },
+      });
+      const d = await r.json();
+      if (d.credited?.length > 0) {
+        const total = d.credited.reduce((s:number, c:any) => s + c.usdAmount, 0);
+        setDepMsg(`✅ Detected and credited $${total.toFixed(2)} to your live balance!`);
+        // Force account refresh
+        if (sb) {
+          const { data:acctData } = await sb.from('trading_accounts').select('real_balance').eq('user_id', user.id).single();
+          if (acctData) saveAccount({ real_balance: acctData.real_balance } as any).catch(()=>{});
         }
+      } else {
+        setDepMsg('No new deposits found. If you just sent, wait 30s and scan again.');
       }
-      if (!found) setDepMsg('No recent deposits found — paste tx hash below');
-    } catch { setDepMsg('Scan failed — paste tx hash manually'); }
+    } catch { setDepMsg('Scan failed — try again'); }
     setScanning(false);
   };
 
