@@ -4,6 +4,7 @@ import { useTradingStore } from './store';
 import { usePriceData, TOP_ASSETS, searchPumpTokens, SearchAsset, AssetId, INTERVALS } from './hooks/usePriceData';
 import { useBotEngine } from './hooks/useBotEngine';
 import { BotPanel } from './components/BotPanel';
+import { LabBotPanel } from './components/LabBotPanel';
 import { PositionsTable } from './components/PositionsTable';
 import { PriceChart, formatPrice } from './components/PriceChart';
 import { AuthModal } from './components/AuthModal';
@@ -560,7 +561,7 @@ export default function App() {
 
             {grassActive && <TouchGrassActive onDeactivate={tgDeactivate}/>}
             <div className="grid grid-cols-[240px_1fr_260px] gap-3 flex-1 min-h-0">
-              <div className="overflow-y-auto"><BotPanel/></div>
+              <div className="overflow-y-auto"><div className="p-3 text-[10px] text-[#4B5563]">Use the Bots tab →</div></div>
               <div className="flex flex-col gap-3 min-w-0 overflow-hidden">
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-3 flex-shrink-0" style={{height:'55%'}}>
                   <div className="flex items-center justify-between mb-2">
@@ -578,7 +579,7 @@ export default function App() {
                   ))}
                 </div>
                 {rightTab==='trade'?<><TradeForm livePrice={livePrice} asset={asset.label}/><IndicatorsPanel prices={prices}/><BuySellPressure candles={candles} livePrice={livePrice} asset={asset.label} assetId={assetId}/><div className="flex-1 overflow-hidden min-h-0"><ActivityLog/></div></>
-                :rightTab==='bots'?<div className="flex-1 overflow-y-auto"><BotPanel/></div>
+                :rightTab==='bots'?<div className="flex-1 overflow-y-auto"><BotPanel/><LabBotPanel target="leverage" isMock={!account?.use_real} compact={true}/></div>
                 :<div className="flex-1 overflow-hidden rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4"><PointsLeaderboard/></div>}
               </div>
             </div>
