@@ -168,7 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } : prev);
       })
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => { supabase?.removeChannel(channel); };
   }, [user]);
 
   // ── Auth actions ───────────────────────────────────────────────────────
