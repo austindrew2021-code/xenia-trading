@@ -277,7 +277,7 @@ export function WalletDepositModal({ onClose }: Props) {
                 </button>
               </div>
             )
-          )}
+          ) : null}
         </div>
       </div>
     </div>
