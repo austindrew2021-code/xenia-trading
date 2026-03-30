@@ -38,7 +38,7 @@ export function WalletDepositModal({ onClose }: Props) {
   const [addrs,       setAddrs]       = useState<Record<string,string>>({});
   const [loading,     setLoading]     = useState(true);
   const [copied,      setCopied]      = useState(false);
-  const [tab,         setTab]         = useState<'deposit'|'withdraw'|'recovery'>('deposit');
+  const [tab,         setTab]         = useState<'deposit'|'withdraw'>('deposit');
   // Deposit confirm
   const [txHash,      setTxHash]      = useState('');
   const [depAmount,   setDepAmount]   = useState('');
@@ -67,17 +67,18 @@ export function WalletDepositModal({ onClose }: Props) {
     if (!platformAddr) {
       import('../lib/supabase').then(({ supabase: sb }) => {
         sb?.auth.getSession().then(({ data: { session } }) => {
-          if (!session?.access_token) return;
+          if (!session?.access_token) { setLoading(false); return; }
           fetch(`${SUPABASE_URL}/functions/v1/generate-deposit-wallets`, {
             method:'POST', headers:{'Content-Type':'application/json', Authorization:`Bearer ${session.access_token}`},
             body: JSON.stringify({})
           }).then(r=>r.json()).then(d=>{
             if(d.sol) setAddrs(prev=>({...prev, SOL:d.sol}));
-          }).catch(()=>{});
-        });
-      });
+          }).catch(()=>{}).finally(()=>setLoading(false));
+        }).catch(()=>setLoading(false));
+      }).catch(()=>setLoading(false));
+    } else {
+      setLoading(false);
     }
-    setLoading(false);
   }, [user?.id]);
 
   const addr = addrs[asset] ?? '—';
@@ -169,7 +170,7 @@ export function WalletDepositModal({ onClose }: Props) {
 
         {/* Tabs */}
         <div className="flex border-b border-white/[0.06] flex-shrink-0">
-          {(['deposit','withdraw','recovery'] as const).map(t=>(
+          {(['deposit','withdraw'] as const).map(t=>(
             <button key={t} onClick={()=>setTab(t)} className={`flex-1 py-2.5 text-xs font-semibold capitalize transition-all ${tab===t?'text-[#2BFFF1] border-b-2 border-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>
               {t}
             </button>
@@ -276,31 +277,6 @@ export function WalletDepositModal({ onClose }: Props) {
                 </button>
               </div>
             )
-          ) : (
-            /* Recovery tab */
-            <div className="space-y-3">
-              <div className="rounded-xl border border-red-500/25 bg-red-500/05 px-3 py-2.5">
-                <p className="text-xs font-bold text-red-400">Keep this private</p>
-                <p className="text-[10px] text-red-400/60 mt-0.5">Never share your recovery phrase. Anyone with it has full access to your wallet. Store it offline in a safe place.</p>
-              </div>
-              <div className="rounded-xl bg-[#05060B] border border-white/[0.06] p-3">
-                <p className="text-[9px] text-[#4B5563] font-semibold mb-2 uppercase tracking-wide">12-Word Recovery Phrase</p>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {generateMnemonic(user?.id??'').split(' ').map((word, i) => (
-                    <div key={i} className="flex items-center gap-1.5 bg-[#0B0E14] border border-white/[0.06] rounded-lg px-2 py-1.5">
-                      <span className="text-[8px] text-[#374151] w-3">{i+1}.</span>
-                      <span className="text-[10px] font-bold text-[#F4F6FA]">{word}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <button onClick={()=>navigator.clipboard.writeText(generateMnemonic(user?.id??'')).catch(()=>{})}
-                className="w-full py-2 rounded-xl border border-white/[0.08] text-xs font-semibold text-[#A7B0B7] hover:text-[#F4F6FA] hover:border-white/20 transition-all">Copy Phrase</button>
-              <div className="rounded-xl bg-[#05060B] border border-white/[0.06] p-3">
-                <p className="text-[9px] text-[#4B5563] font-semibold mb-1.5">SOL Wallet Address</p>
-                <p className="font-mono text-[10px] text-[#2BFFF1] break-all">{addrs.SOL??'—'}</p>
-              </div>
-            </div>
           )}
         </div>
       </div>

@@ -3,8 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { useTradingStore } from '../store';
 import { LabBotPanel } from '../components/LabBotPanel';
-
-
+import { BotPanel } from '../components/BotPanel';
 import { TradeAnimation } from '../components/TradeAnimation';
 import { PriceChart } from '../components/PriceChart';
 import { Candle } from '../types';
@@ -162,22 +161,49 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
 
       if(isMock) {
         // ── Mock trade ─────────────────────────────────────────────
-        const r = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
-          method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
-          body:JSON.stringify({
-            action:'mock_trade', isMock:true,
-            inputMint:side==='buy'?USDC_MINT:token.mint,
-            outputMint:side==='buy'?token.mint:USDC_MINT,
-            amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name,
-            priceUsd:livePrice, side
-          }),
-        });
-        const d = await r.json();
-        if(!r.ok) throw new Error(d.error ?? d.message ?? 'Trade failed');
-        // Use the fresh balance returned by edge function (already updated in DB)
-        if(d.new_mock_balance !== undefined) {
-          saveAccount({ mock_balance: d.new_mock_balance } as any);
-        } else if(supabase && user) {
+        let mockSuccess = false;
+        try {
+          const r = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
+            method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
+            body:JSON.stringify({
+              action:'mock_trade', isMock:true,
+              inputMint:side==='buy'?USDC_MINT:token.mint,
+              outputMint:side==='buy'?token.mint:USDC_MINT,
+              amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name,
+              priceUsd:livePrice, side
+            }),
+          });
+          const d = await r.json();
+          if(r.ok) {
+            mockSuccess = true;
+            if(d.new_mock_balance !== undefined) {
+              saveAccount({ mock_balance: d.new_mock_balance } as any);
+            }
+          }
+        } catch {}
+        // Fallback: direct DB update if edge function failed
+        if(!mockSuccess && supabase && user) {
+          const fee = amtN * MOCK_FEE;
+          const newBal = side==='buy' ? (account?.mock_balance??0) - amtN - fee : (account?.mock_balance??0) + amtN - fee;
+          if(newBal < 0) throw new Error('Insufficient mock balance');
+          const tokenAmount = side==='buy' ? amtN/livePrice : 0;
+          await Promise.all([
+            supabase.from('trading_accounts').update({ mock_balance: Math.max(0, newBal) }).eq('user_id', user.id),
+            supabase.from('spot_trades').insert({
+              user_id:user.id, token_mint:token.mint, token_symbol:token.symbol, token_name:token.name,
+              side, amount_token:tokenAmount, amount_usd:amtN, price_usd:livePrice, fee_usd:fee, is_mock:true, status:'filled',
+            }),
+            side==='buy' ? supabase.from('spot_holdings').upsert({
+              user_id:user.id, token_mint:token.mint, token_symbol:token.symbol, token_name:token.name,
+              amount:tokenAmount, avg_cost:livePrice, is_mock:true, updated_at:new Date().toISOString(),
+            }, { onConflict:'user_id,token_mint,is_mock' }) : Promise.resolve(),
+          ]);
+          saveAccount({ mock_balance: Math.max(0, newBal) } as any);
+        } else if(!mockSuccess) {
+          throw new Error('Mock trade failed');
+        }
+        // Refresh balance from DB
+        if(supabase && user && mockSuccess) {
           const { data: freshAcct } = await supabase.from('trading_accounts').select('mock_balance').eq('user_id', user.id).single();
           if(freshAcct) saveAccount({ mock_balance: freshAcct.mock_balance } as any);
         }
@@ -193,6 +219,11 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
         });
         if (platResult.success) {
           setStatus({type:'success',msg:platResult.message ?? 'Trade executed via platform wallet'});
+          // Refresh balance from DB
+          if(supabase && user) {
+            const { data: freshAcct } = await supabase.from('trading_accounts').select('real_balance,mock_balance').eq('user_id', user.id).single();
+            if(freshAcct) saveAccount({ real_balance: freshAcct.real_balance, mock_balance: freshAcct.mock_balance } as any);
+          }
           setAmt(''); setPct(0); onSuccess();
           setExec(false); return;
         }
@@ -523,8 +554,9 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
 
           {/* Desktop order panel */}
           <div className="hidden md:flex w-[240px] lg:w-[260px] flex-shrink-0 border-l border-white/[0.06] flex-col overflow-y-auto bg-[#080A10]">
+            <BotPanel/>
             <LabBotPanel target="spot" isMock={isMock} compact={true}/>
-            <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={()=>{}}/>
+            <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={loadPortfolio}/>
           </div>
 
           {/* Mobile: floating Buy/Sell button + bottom sheet */}
@@ -560,6 +592,7 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                       </button>
                     </div>
+                    <BotPanel/>
                     <LabBotPanel target="spot" isMock={isMock} compact={true}/>
                     <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={()=>setShowOrder(false)}/>
                   </div>

@@ -16,6 +16,25 @@ function indEMA(closes: number[], n: number): (number|null)[] {
   for(let i=n;i<closes.length;i++){e=closes[i]*k+e*(1-k);out[i]=e;}
   return out;
 }
+function indWMA(closes: number[], n: number): (number|null)[] {
+  return closes.map((_,i)=>{if(i<n-1)return null;const sl=closes.slice(i-n+1,i+1);let w=0,s=0;for(let j=0;j<n;j++){w+=j+1;s+=(j+1)*sl[j];}return s/w;});
+}
+function indHMA(closes: number[], n: number): (number|null)[] {
+  const half=Math.max(2,Math.floor(n/2)),sq=Math.max(2,Math.round(Math.sqrt(n)));
+  const wmaHalf=indWMA(closes,half),wmaFull=indWMA(closes,n);
+  const diff=closes.map((_,i)=>wmaHalf[i]!==null&&wmaFull[i]!==null?2*(wmaHalf[i] as number)-(wmaFull[i] as number):null);
+  const clean=diff.filter(v=>v!==null) as number[];
+  const wma2=indWMA(clean,sq);
+  const out:( number|null)[]=new Array(closes.length).fill(null);
+  let offset=diff.findIndex(v=>v!==null);
+  for(let i=0;i<wma2.length;i++) out[offset+i]=wma2[i];
+  return out;
+}
+function indDEMA(closes: number[], n: number): (number|null)[] {
+  const e1=indEMA(closes,n); const clean=e1.filter(v=>v!==null) as number[];
+  const e2=indEMA(clean,n); const off=e1.findIndex(v=>v!==null);
+  return closes.map((_,i)=>{const e1v=e1[i];if(e1v===null)return null;const e2i=i-off;const e2v=e2[e2i];if(e2v===null||e2i<0)return null;return 2*e1v-e2v;});
+}
 function indVWAP(candles: {high:number;low:number;close:number;volume:number}[]): (number|null)[] {
   let cpv=0,cv=0;
   return candles.map(c=>{const tp=(c.high+c.low+c.close)/3;cpv+=tp*c.volume;cv+=c.volume;return cv>0?cpv/cv:null;});
@@ -25,6 +44,97 @@ function indBB(closes: number[], n: number, mult: number) {
   const upper=mid.map((m,i)=>{if(m===null||i<n-1)return null;const sl=closes.slice(i-n+1,i+1);const sd=Math.sqrt(sl.reduce((s,v)=>s+(v-m)**2,0)/n);return m+mult*sd;});
   const lower=mid.map((m,i)=>{if(m===null||i<n-1)return null;const sl=closes.slice(i-n+1,i+1);const sd=Math.sqrt(sl.reduce((s,v)=>s+(v-m)**2,0)/n);return m-mult*sd;});
   return {upper,mid,lower};
+}
+function indKeltner(candles:{high:number;low:number;close:number}[], n:number, mult:number) {
+  const closes=candles.map(c=>c.close);
+  const mid=indEMA(closes,n);
+  const trArr=candles.map((c,i)=>i===0?c.high-c.low:Math.max(c.high-c.low,Math.abs(c.high-candles[i-1].close),Math.abs(c.low-candles[i-1].close)));
+  const atr=indSMA(trArr,n);
+  return{upper:mid.map((m,i)=>m!==null&&atr[i]!==null?(m as number)+mult*(atr[i] as number):null),mid,lower:mid.map((m,i)=>m!==null&&atr[i]!==null?(m as number)-mult*(atr[i] as number):null)};
+}
+function indDonchian(candles:{high:number;low:number}[], n:number) {
+  return{upper:candles.map((_,i)=>i<n-1?null:Math.max(...candles.slice(i-n+1,i+1).map(c=>c.high))),lower:candles.map((_,i)=>i<n-1?null:Math.min(...candles.slice(i-n+1,i+1).map(c=>c.low)))};
+}
+function indATR(candles:{high:number;low:number;close:number}[], n:number): (number|null)[] {
+  const tr=candles.map((c,i)=>i===0?c.high-c.low:Math.max(c.high-c.low,Math.abs(c.high-candles[i-1].close),Math.abs(c.low-candles[i-1].close)));
+  return indSMA(tr,n);
+}
+function indSupertrend(candles:{high:number;low:number;close:number}[], period:number, mult:number): (number|null)[] {
+  const atr=indATR(candles,period);
+  const out:(number|null)[]=new Array(candles.length).fill(null);
+  let up=0,dn=0,trend=1;
+  for(let i=period;i<candles.length;i++){
+    const atrv=atr[i]; if(atrv===null) continue;
+    const mid=(candles[i].high+candles[i].low)/2;
+    const newUp=mid-mult*atrv; const newDn=mid+mult*atrv;
+    up=candles[i-1].close>up?Math.max(newUp,up):newUp;
+    dn=candles[i-1].close<dn?Math.min(newDn,dn):newDn;
+    if(candles[i].close>dn){trend=1;}else if(candles[i].close<up){trend=-1;}
+    out[i]=trend===1?up:dn;
+  }
+  return out;
+}
+function indPSAR(candles:{high:number;low:number;close:number}[], step=0.02, maxStep=0.2): (number|null)[] {
+  if(candles.length<2) return candles.map(()=>null);
+  const out:(number|null)[]=new Array(candles.length).fill(null);
+  let bull=true,sar=candles[0].low,ep=candles[0].high,af=step;
+  for(let i=1;i<candles.length;i++){
+    sar=sar+af*(ep-sar);
+    if(bull){sar=Math.min(sar,candles[i-1].low,i>1?candles[i-2].low:candles[i-1].low);if(candles[i].low<sar){bull=false;sar=ep;ep=candles[i].low;af=step;}else{if(candles[i].high>ep){ep=candles[i].high;af=Math.min(af+step,maxStep);}}}
+    else{sar=Math.max(sar,candles[i-1].high,i>1?candles[i-2].high:candles[i-1].high);if(candles[i].high>sar){bull=true;sar=ep;ep=candles[i].high;af=step;}else{if(candles[i].low<ep){ep=candles[i].low;af=Math.min(af+step,maxStep);}}}
+    out[i]=sar;
+  }
+  return out;
+}
+function indRSIArr(closes: number[], n: number): (number|null)[] {
+  const out:(number|null)[]=new Array(closes.length).fill(null);
+  if(closes.length<n+1) return out;
+  let avgG=0,avgL=0;
+  for(let i=1;i<=n;i++){const d=closes[i]-closes[i-1];d>0?avgG+=d:avgL-=d;}
+  avgG/=n; avgL/=n;
+  out[n]=avgL===0?100:100-100/(1+avgG/avgL);
+  for(let i=n+1;i<closes.length;i++){const d=closes[i]-closes[i-1];const g=d>0?d:0,l=d<0?-d:0;avgG=(avgG*(n-1)+g)/n;avgL=(avgL*(n-1)+l)/n;out[i]=avgL===0?100:100-100/(1+avgG/avgL);}
+  return out;
+}
+function indMACDArr(closes: number[]): {macd:(number|null)[];signal:(number|null)[];hist:(number|null)[]} {
+  const fast=indEMA(closes,12),slow=indEMA(closes,26);
+  const macd=closes.map((_,i)=>fast[i]!==null&&slow[i]!==null?(fast[i] as number)-(slow[i] as number):null);
+  const cleanM=macd.filter(v=>v!==null) as number[]; const off=macd.findIndex(v=>v!==null);
+  const sig9=indEMA(cleanM,9);
+  const signal:( number|null)[]=new Array(closes.length).fill(null);
+  const hist:( number|null)[]=new Array(closes.length).fill(null);
+  for(let i=0;i<sig9.length;i++){const mi=off+i;signal[mi]=sig9[i];if(macd[mi]!==null&&sig9[i]!==null)hist[mi]=(macd[mi] as number)-(sig9[i] as number);}
+  return{macd,signal,hist};
+}
+function indStochArr(candles:{high:number;low:number;close:number}[], k:number, d:number, smooth:number): {kArr:(number|null)[];dArr:(number|null)[]} {
+  const kRaw=candles.map((_,i)=>{if(i<k-1)return null;const sl=candles.slice(i-k+1,i+1);const hi=Math.max(...sl.map(c=>c.high)),lo=Math.min(...sl.map(c=>c.low));return hi===lo?50:(candles[i].close-lo)/(hi-lo)*100;});
+  const cleanK=kRaw.filter(v=>v!==null) as number[]; const offK=kRaw.findIndex(v=>v!==null);
+  const kSmooth=indSMA(cleanK,smooth);
+  const kArr:(number|null)[]=new Array(candles.length).fill(null);
+  for(let i=0;i<kSmooth.length;i++) kArr[offK+i]=kSmooth[i];
+  const cleanKS=kSmooth.filter(v=>v!==null) as number[]; const offKS=kArr.findIndex(v=>v!==null);
+  const dSmooth=indSMA(cleanKS,d);
+  const dArr:(number|null)[]=new Array(candles.length).fill(null);
+  for(let i=0;i<dSmooth.length;i++) dArr[offKS+i]=dSmooth[i];
+  return{kArr,dArr};
+}
+function indOBV(candles:{close:number;volume:number}[]): number[] {
+  const out:number[]=[0];
+  for(let i=1;i<candles.length;i++) out.push(out[i-1]+(candles[i].close>candles[i-1].close?candles[i].volume:candles[i].close<candles[i-1].close?-candles[i].volume:0));
+  return out;
+}
+function indADX(candles:{high:number;low:number;close:number}[], n:number): (number|null)[] {
+  if(candles.length<n+1) return candles.map(()=>null);
+  const tr:number[]=[],pdm:number[]=[],ndm:number[]=[];
+  for(let i=1;i<candles.length;i++){
+    tr.push(Math.max(candles[i].high-candles[i].low,Math.abs(candles[i].high-candles[i-1].close),Math.abs(candles[i].low-candles[i-1].close)));
+    pdm.push(Math.max(candles[i].high-candles[i-1].high,0));
+    ndm.push(Math.max(candles[i-1].low-candles[i].low,0));
+  }
+  const atr=indSMA(tr,n),pdi=indSMA(pdm,n),ndi=indSMA(ndm,n);
+  const out:(number|null)[]=new Array(candles.length).fill(null);
+  for(let i=0;i<tr.length;i++){const a=atr[i],p=pdi[i],nd=ndi[i];if(a===null||a===0||p===null||nd===null)continue;const pDI=p/a*100,nDI=nd/a*100;const dx=Math.abs(pDI-nDI)/(pDI+nDI)*100;out[i+1]=dx;}
+  return out;
 }
 function indRSI(closes: number[], n: number): number|null {
   if(closes.length<n+1) return null;
@@ -159,7 +269,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         borderColor: 'rgba(255,255,255,0.06)',
         textColor: activeTheme.textColor,
         scaleMargins: { top: 0.08, bottom: 0.22 },
-        autoScale: true,
+        autoScale: false,
         mode: PriceScaleMode.Normal,
       },
       timeScale: {
@@ -277,7 +387,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     const onStart = (y:number) => { const r=getRange(); if(!r) return; drag={startY:y,centerPrice:r.center,halfRange:r.half}; };
     const onMove  = (y:number) => { if(!drag) return; const factor=Math.pow(2,(y-drag.startY)/80); const newHalf=Math.max(drag.centerPrice*0.00001,drag.halfRange*factor); applyRange(drag.centerPrice-newHalf,drag.centerPrice+newHalf); };
     const onEnd   = () => { drag=null; };
-    const onDbl   = () => { candleRef.current?.applyOptions({ autoscaleInfoProvider:undefined }); };
+    const onDbl   = () => { candleRef.current?.applyOptions({ autoscaleInfoProvider:undefined }); if(chartRef.current){chartRef.current.priceScale('right').applyOptions({autoScale:true});requestAnimationFrame(()=>chartRef.current?.priceScale('right').applyOptions({autoScale:false}));} };
 
     const onTouchStart = (e:TouchEvent) => { if(e.touches.length<2) return; e.preventDefault(); onStart((e.touches[0].clientY+e.touches[1].clientY)/2); };
     const onTouchMove  = (e:TouchEvent) => { if(!drag) return; e.preventDefault(); onMove(e.touches.length>=2?(e.touches[0].clientY+e.touches[1].clientY)/2:e.touches[0].clientY); };
@@ -375,6 +485,11 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     candleRef.current.setData(candles.map(c => ({ time:(c.time/1000) as any, open:c.open, high:c.high, low:c.low, close:c.close })));
     volumeRef.current.setData(candles.map(c => ({ time:(c.time/1000) as any, value:c.volume, color:c.close>=c.open?activeTheme.volumeUp:activeTheme.volumeDown })));
     chartRef.current?.timeScale().fitContent();
+    // Reset price scale to fit new data (autoScale is off to allow free vertical movement)
+    if (chartRef.current) {
+      chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+      requestAnimationFrame(() => { chartRef.current?.priceScale('right').applyOptions({ autoScale: false }); });
+    }
   }, [candles]);
 
   // ── Live price ──────────────────────────────────────────────────────────
@@ -400,31 +515,119 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
 
     for (const id of activeIndicators) {
       const p = indicatorParams[id] ?? {};
+      const osc = (scaleId:string, color1:string, vals1:(number|null)[], color2?:string, vals2?:(number|null)[]) => {
+        const s1=chart.addSeries(LineSeries,{color:color1,lineWidth:1,priceLineVisible:false,lastValueVisible:false,priceScaleId:scaleId});
+        s1.setData(toData(vals1));
+        const out=[s1];
+        if(color2&&vals2?.length){const s2=chart.addSeries(LineSeries,{color:color2,lineWidth:1,priceLineVisible:false,lastValueVisible:false,priceScaleId:scaleId});s2.setData(toData(vals2));out.push(s2);}
+        chart.priceScale(scaleId).applyOptions({scaleMargins:{top:0.75,bottom:0},borderColor:'rgba(255,255,255,0.05)',textColor:activeTheme.textColor});
+        return out;
+      };
       if (id === 'sma') {
         const n = p.period ?? 20;
-        const vals = indSMA(closes, n);
         const s = chart.addSeries(LineSeries, { color:'#F59E0B', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
-        s.setData(toData(vals));
+        s.setData(toData(indSMA(closes, n)));
         indicatorSeriesRef.current.set(id, [s]);
       } else if (id === 'ema') {
-        const n = p.period ?? 21;
-        const vals = indEMA(closes, n);
+        const n = p.period ?? 20;
         const s = chart.addSeries(LineSeries, { color:'#818CF8', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
-        s.setData(toData(vals));
+        s.setData(toData(indEMA(closes, n)));
+        indicatorSeriesRef.current.set(id, [s]);
+      } else if (id === 'wma') {
+        const n = p.period ?? 20;
+        const s = chart.addSeries(LineSeries, { color:'#C084FC', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        s.setData(toData(indWMA(closes, n)));
+        indicatorSeriesRef.current.set(id, [s]);
+      } else if (id === 'hma') {
+        const n = p.period ?? 14;
+        const s = chart.addSeries(LineSeries, { color:'#FB923C', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        s.setData(toData(indHMA(closes, n)));
+        indicatorSeriesRef.current.set(id, [s]);
+      } else if (id === 'dema') {
+        const n = p.period ?? 20;
+        const s = chart.addSeries(LineSeries, { color:'#A78BFA', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        s.setData(toData(indDEMA(closes, n)));
+        indicatorSeriesRef.current.set(id, [s]);
+      } else if (id === 'tema') {
+        const n = p.period ?? 20;
+        const e1=indEMA(closes,n);
+        const c1=e1.filter(v=>v!==null) as number[];
+        const e2=indEMA(c1,n);
+        const c2=e2.filter(v=>v!==null) as number[];
+        const e3=indEMA(c2,n);
+        const o1=n-1, o2=o1+(n-1);
+        const tema=closes.map((_,i)=>{const v1=e1[i];if(v1===null)return null;const i2=i-o1;const v2=i2>=0&&i2<e2.length?e2[i2]:null;if(v2===null)return null;const i3=i-o2;const v3=i3>=0&&i3<e3.length?e3[i3]:null;if(v3===null)return null;return 3*v1-3*v2+v3;});
+        const s = chart.addSeries(LineSeries, { color:'#67E8F9', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        s.setData(toData(tema));
         indicatorSeriesRef.current.set(id, [s]);
       } else if (id === 'vwap') {
         const vals = indVWAP(candles);
         const s = chart.addSeries(LineSeries, { color:'#34D399', lineWidth:1, lineStyle:1, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(vals));
         indicatorSeriesRef.current.set(id, [s]);
-      } else if (id === 'bb') {
-        const n = p.period ?? 20; const mult = p.stddev ?? 2;
+      } else if (id === 'bbands') {
+        const n = p.period ?? 20; const mult = p.mult ?? 2;
         const { upper, mid, lower } = indBB(closes, n, mult);
-        const su = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.6)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        const su = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.5)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         const sm = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.9)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
-        const sl = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.6)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        const sl = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.5)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         su.setData(toData(upper)); sm.setData(toData(mid)); sl.setData(toData(lower));
         indicatorSeriesRef.current.set(id, [su, sm, sl]);
+      } else if (id === 'keltner') {
+        const n = p.period ?? 20; const mult = p.mult ?? 2;
+        const { upper, mid, lower } = indKeltner(candles, n, mult);
+        const su = chart.addSeries(LineSeries, { color:'rgba(251,146,60,0.5)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        const sm = chart.addSeries(LineSeries, { color:'rgba(251,146,60,0.9)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        const sl2 = chart.addSeries(LineSeries, { color:'rgba(251,146,60,0.5)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        su.setData(toData(upper)); sm.setData(toData(mid)); sl2.setData(toData(lower));
+        indicatorSeriesRef.current.set(id, [su, sm, sl2]);
+      } else if (id === 'donchian') {
+        const n = p.period ?? 20;
+        const { upper, lower } = indDonchian(candles, n);
+        const su = chart.addSeries(LineSeries, { color:'rgba(99,102,241,0.7)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        const sl2 = chart.addSeries(LineSeries, { color:'rgba(99,102,241,0.7)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        su.setData(toData(upper)); sl2.setData(toData(lower));
+        indicatorSeriesRef.current.set(id, [su, sl2]);
+      } else if (id === 'supertrend') {
+        const n = p.period ?? 10; const mult = p.mult ?? 3;
+        const vals = indSupertrend(candles, n, mult);
+        const s = chart.addSeries(LineSeries, { color:'#4ADE80', lineWidth:2, priceLineVisible:false, lastValueVisible:false });
+        s.setData(toData(vals));
+        indicatorSeriesRef.current.set(id, [s]);
+      } else if (id === 'psar') {
+        const step = p.step ?? 0.02; const max = p.max ?? 0.2;
+        const vals = indPSAR(candles, step, max);
+        const s = chart.addSeries(LineSeries, { color:'#F472B6', lineWidth:1, lineStyle:3, priceLineVisible:false, lastValueVisible:false });
+        s.setData(toData(vals));
+        indicatorSeriesRef.current.set(id, [s]);
+      } else if (id === 'rsi') {
+        const n = p.period ?? 14;
+        indicatorSeriesRef.current.set(id, osc('rsi_scale','#818CF8',indRSIArr(closes,n)));
+      } else if (id === 'macd') {
+        const { macd, signal } = indMACDArr(closes);
+        indicatorSeriesRef.current.set(id, osc('macd_scale','#2BFFF1',macd,'#F59E0B',signal));
+      } else if (id === 'stoch') {
+        const k = p.k ?? 14; const d = p.d ?? 3; const smooth = p.smooth ?? 3;
+        const { kArr, dArr } = indStochArr(candles, k, d, smooth);
+        indicatorSeriesRef.current.set(id, osc('stoch_scale','#4ADE80',kArr,'#F87171',dArr));
+      } else if (id === 'stochrsi') {
+        const rsiP = p.rsiPeriod ?? 14; const stP = p.stochPeriod ?? 14;
+        const rsiArr = indRSIArr(closes, rsiP);
+        const cleanR = rsiArr.filter(v=>v!==null) as number[];
+        const {kArr,dArr} = indStochArr(cleanR.map(v=>({high:v,low:v,close:v})),stP,3,3);
+        const off=rsiArr.findIndex(v=>v!==null);
+        const kFull:(number|null)[]=new Array(closes.length).fill(null);
+        const dFull:(number|null)[]=new Array(closes.length).fill(null);
+        for(let i=0;i<kArr.length;i++){kFull[off+i]=kArr[i];dFull[off+i]=dArr[i];}
+        indicatorSeriesRef.current.set(id, osc('stochrsi_scale','#A78BFA',kFull,'#F59E0B',dFull));
+      } else if (id === 'atr') {
+        const n = p.period ?? 14;
+        indicatorSeriesRef.current.set(id, osc('atr_scale','#F59E0B',indATR(candles,n)));
+      } else if (id === 'obv') {
+        indicatorSeriesRef.current.set(id, osc('obv_scale','#34D399',indOBV(candles)));
+      } else if (id === 'adx') {
+        const n = p.period ?? 14;
+        indicatorSeriesRef.current.set(id, osc('adx_scale','#F472B6',indADX(candles,n)));
       }
     }
   }, [activeIndicators, indicatorParams, candles]);

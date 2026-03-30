@@ -151,6 +151,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, [fetchAccount]);
 
+  // ── Realtime balance sync ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!supabase || !user) return;
+    const channel = supabase
+      .channel(`account:${user.id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'trading_accounts',
+        filter: `user_id=eq.${user.id}`,
+      }, (payload) => {
+        const d = payload.new as any;
+        setAccount(prev => prev ? {
+          ...prev,
+          mock_balance: d.mock_balance ?? prev.mock_balance,
+          real_balance: d.real_balance ?? prev.real_balance,
+        } : prev);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user]);
+
   // ── Auth actions ───────────────────────────────────────────────────────
   const signUp = async (email: string, password: string, username: string): Promise<string | null> => {
     if (!supabase) return 'Supabase not configured';
