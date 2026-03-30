@@ -110,6 +110,8 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
   const { user, account, saveAccount } = useAuth();
   const { capital } = useTradingStore();
   const [side,setSide]       = useState<'buy'|'sell'>('buy');
+  const [orderType,setOrderType] = useState<'market'|'limit'>('market');
+  const [limitPrice,setLimitPrice] = useState('');
   const [amountUsd,setAmt]   = useState('');
   const [amountPct,setPct]   = useState(0);
   const [tp,setTp]           = useState('');
@@ -130,7 +132,28 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
 
   const getAuth = async () => { const {data:{session}}=await supabase!.auth.getSession(); return session?.access_token??''; };
 
+  const placeLimitOrder = async () => {
+    if(!user||!token||amtN<=0||!limitPrice||parseFloat(limitPrice)<=0) return;
+    if(amtN>balance) { setStatus({type:'error',msg:'Insufficient balance'}); return; }
+    if(!supabase) { setStatus({type:'error',msg:'Not connected'}); return; }
+    setExec(true); setStatus(null);
+    try {
+      const lp = parseFloat(limitPrice);
+      const { error } = await supabase.from('spot_trades').insert({
+        user_id: user.id, token_mint: token.mint, token_symbol: token.symbol, token_name: token.name,
+        side, amount_usd: amtN, limit_price: lp, price_usd: livePrice,
+        fee_usd: amtN * feeP, is_mock: isMock, status: 'pending_limit',
+        tp_price: parseFloat(tp)||null, sl_price: parseFloat(sl)||null,
+      });
+      if(error) throw error;
+      setStatus({type:'success',msg:`Limit ${side} order placed at ${fmtP(lp)}`});
+      setAmt(''); setPct(0); setLimitPrice('');
+    } catch(e:any) { setStatus({type:'error',msg:e.message??'Order failed'}); }
+    setExec(false);
+  };
+
   const executeTrade = async () => {
+    if(orderType==='limit') { placeLimitOrder(); return; }
     if(!user||!token||amtN<=0) return;
     if(amtN>balance) { setStatus({type:'error',msg:'Insufficient balance'}); return; }
     setExec(true); setStatus(null);
@@ -259,6 +282,22 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
         ))}
       </div>
 
+      {/* Order type toggle */}
+      <div className="flex rounded-lg overflow-hidden border border-white/[0.06] text-[10px] font-bold">
+        {(['market','limit'] as const).map(t=>(
+          <button key={t} onClick={()=>setOrderType(t)} className={`flex-1 py-1.5 capitalize transition-all ${orderType===t?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{t}</button>
+        ))}
+      </div>
+
+      {/* Limit price input */}
+      {orderType==='limit'&&(
+        <div className="flex items-center gap-1.5 bg-[#05060B] border border-[#2BFFF1]/25 rounded-xl px-2.5 py-2 focus-within:border-[#2BFFF1]/50 transition-all">
+          <span className="text-[#2BFFF1]/60 text-[10px] font-semibold whitespace-nowrap">Limit $</span>
+          <input type="number" value={limitPrice} onChange={e=>setLimitPrice(e.target.value)} placeholder={livePrice>0?livePrice.toFixed(6):'price'} className="flex-1 bg-transparent text-xs font-mono text-[#2BFFF1] outline-none" style={{minWidth:0}}/>
+          {livePrice>0&&<button onClick={()=>setLimitPrice(livePrice.toFixed(6))} className="text-[8px] text-[#2BFFF1]/50 hover:text-[#2BFFF1] border border-[#2BFFF1]/20 rounded px-1 py-0.5">Now</button>}
+        </div>
+      )}
+
       {/* Balance */}
       <div className="flex justify-between text-[10px] px-0.5">
         <div className="flex items-center gap-1">
@@ -313,10 +352,11 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
         </div>
       )}
 
-      <button onClick={executeTrade} disabled={executing||!user||amtN<=0||amtN>balance}
+      <button onClick={executeTrade} disabled={executing||!user||amtN<=0||amtN>balance||(orderType==='limit'&&(!limitPrice||parseFloat(limitPrice)<=0))}
         className={`w-full py-3 rounded-xl text-sm font-black transition-all disabled:opacity-40 ${side==='buy'?'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30':'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'}`}>
-        {executing?<span className="flex items-center justify-center gap-1.5"><div className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin"/>{isMock?'Simulating…':'Sending…'}</span>
+        {executing?<span className="flex items-center justify-center gap-1.5"><div className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin"/>{orderType==='limit'?'Placing…':isMock?'Simulating…':'Sending…'}</span>
           :!user?'Sign in to trade'
+          :orderType==='limit'?`Place Limit ${side==='buy'?'Buy':'Sell'}`
           :`${side==='buy'?'Buy':'Sell'} ${token.symbol} ${isMock?'· Mock':'· Live'}`}
       </button>
     </div>
@@ -359,7 +399,7 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
     if(!token){return;}
     setLivePrice(token.priceUsd);
     clearInterval(priceTimer.current);
-    priceTimer.current=setInterval(async()=>{ try{const r=await fetch(`https://api.dexscreener.com/latest/dex/tokens/${token.mint}`);const d=await r.json();const p=parseFloat(d.pairs?.[0]?.priceUsd??'0');if(p>0)setLivePrice(p);}catch{} },10_000);
+    priceTimer.current=setInterval(async()=>{ try{const r=await fetch(`https://api.dexscreener.com/latest/dex/tokens/${token.mint}`);const d=await r.json();const p=parseFloat(d.pairs?.[0]?.priceUsd??'0');if(p>0)setLivePrice(p);}catch{} },3_000);
     return()=>clearInterval(priceTimer.current);
   },[token?.mint]);
 
@@ -466,7 +506,7 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
                   onTouchStart={e=>e.stopPropagation()}>
                   {loadingChart&&candles.length===0
                     ?<div className="h-full flex items-center justify-center gap-2 text-[#4B5563] text-xs"><div className="w-4 h-4 border-2 border-[#2BFFF1]/20 border-t-[#2BFFF1] rounded-full animate-spin"/>Loading…</div>
-                    :<PriceChart candles={candles} livePrice={livePrice} positions={[]}/>}
+                    :<PriceChart candles={candles} livePrice={livePrice} positions={[]} interval={interval} onIntervalChange={setInterval_}/>}
                 </div>
                 <div className="flex-shrink-0 max-h-20 overflow-hidden">
                   <PressureBar token={token} candles={candles}/>
@@ -483,8 +523,8 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
 
           {/* Desktop order panel */}
           <div className="hidden md:flex w-[240px] lg:w-[260px] flex-shrink-0 border-l border-white/[0.06] flex-col overflow-y-auto bg-[#080A10]">
-            <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={()=>{}}/>
             <LabBotPanel target="spot" isMock={isMock} compact={true}/>
+            <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={()=>{}}/>
           </div>
 
           {/* Mobile: floating Buy/Sell button + bottom sheet */}
@@ -520,6 +560,7 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                       </button>
                     </div>
+                    <LabBotPanel target="spot" isMock={isMock} compact={true}/>
                     <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={()=>setShowOrder(false)}/>
                   </div>
                 </div>

@@ -1,13 +1,53 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import {
   createChart, ColorType, CrosshairMode, LineStyle,
-  IChartApi, ISeriesApi, CandlestickSeries, HistogramSeries,
+  IChartApi, ISeriesApi, CandlestickSeries, HistogramSeries, LineSeries,
   PriceScaleMode,
 } from 'lightweight-charts';
+
+// ── Indicator math helpers ────────────────────────────────────────────────
+function indSMA(closes: number[], n: number): (number|null)[] {
+  return closes.map((_,i) => i<n-1?null:closes.slice(i-n+1,i+1).reduce((a,b)=>a+b,0)/n);
+}
+function indEMA(closes: number[], n: number): (number|null)[] {
+  const k=2/(n+1); const out: (number|null)[]=new Array(closes.length).fill(null);
+  if(closes.length<n) return out;
+  let e=closes.slice(0,n).reduce((a,b)=>a+b,0)/n; out[n-1]=e;
+  for(let i=n;i<closes.length;i++){e=closes[i]*k+e*(1-k);out[i]=e;}
+  return out;
+}
+function indVWAP(candles: {high:number;low:number;close:number;volume:number}[]): (number|null)[] {
+  let cpv=0,cv=0;
+  return candles.map(c=>{const tp=(c.high+c.low+c.close)/3;cpv+=tp*c.volume;cv+=c.volume;return cv>0?cpv/cv:null;});
+}
+function indBB(closes: number[], n: number, mult: number) {
+  const mid=indSMA(closes,n);
+  const upper=mid.map((m,i)=>{if(m===null||i<n-1)return null;const sl=closes.slice(i-n+1,i+1);const sd=Math.sqrt(sl.reduce((s,v)=>s+(v-m)**2,0)/n);return m+mult*sd;});
+  const lower=mid.map((m,i)=>{if(m===null||i<n-1)return null;const sl=closes.slice(i-n+1,i+1);const sd=Math.sqrt(sl.reduce((s,v)=>s+(v-m)**2,0)/n);return m-mult*sd;});
+  return {upper,mid,lower};
+}
+function indRSI(closes: number[], n: number): number|null {
+  if(closes.length<n+1) return null;
+  let g=0,l=0;
+  for(let i=closes.length-n;i<closes.length;i++){const d=closes[i]-closes[i-1];d>0?g+=d:l-=d;}
+  const ag=g/n,al=l/n; return al===0?100:100-100/(1+ag/al);
+}
+function indMACD(closes: number[]): {macd:number|null;signal:number|null;hist:number|null} {
+  const fast=indEMA(closes,12),slow=indEMA(closes,26);
+  const macdLine=closes.map((_,i)=>fast[i]!==null&&slow[i]!==null?(fast[i] as number)-(slow[i] as number):null);
+  const validMacd=macdLine.filter(v=>v!==null) as number[];
+  if(validMacd.length===0) return{macd:null,signal:null,hist:null};
+  const sigVals=indEMA(validMacd,9);
+  const macd=macdLine[macdLine.length-1];
+  const signal=sigVals[sigVals.length-1];
+  return{macd,signal,hist:macd!==null&&signal!==null?macd-signal:null};
+}
 import { Candle } from '../types';
 import type { ChartTheme } from './ChartSettings';
 import { ChartIndicatorsMenu } from './ChartIndicatorsMenu';
 import { loadChartTheme } from './ChartSettings';
+
+const CHART_INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'] as const;
 
 interface Props {
   candles: Candle[];
@@ -19,6 +59,8 @@ interface Props {
   onOpenSettings?: () => void;
   /** If provided, enables the floating trade panel for quick order entry */
   onPlaceOrder?: (side: 'buy'|'sell', tp: number|null, sl: number|null) => void;
+  interval?: string;
+  onIntervalChange?: (i: string) => void;
 }
 
 function getPriceFormat(price: number) {
@@ -45,7 +87,7 @@ interface ContextMenu { x: number; y: number; price: number; }
 
 const PRICE_AXIS_WIDTH = 70;
 
-export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL, theme, onOpenSettings, onPlaceOrder }: Props) {
+export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL, theme, onOpenSettings, onPlaceOrder, interval, onIntervalChange }: Props) {
   const wrapperRef     = useRef<HTMLDivElement>(null);
   const containerRef   = useRef<HTMLDivElement>(null);
   const axisOverlayRef = useRef<HTMLDivElement>(null);
@@ -60,7 +102,9 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
   const tpLineRef      = useRef<any>(null);
   const slLineRef      = useRef<any>(null);
   const obLineRef      = useRef<any[]>([]);
+  const indicatorSeriesRef = useRef<Map<string, any[]>>(new Map());
 
+  const [indicatorParams, setIndicatorParams] = useState<Record<string,Record<string,number>>>({});
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeTool,   setActiveTool]   = useState<DrawTool>('none');
   const [drawStep,     setDrawStep]     = useState(0);
@@ -340,6 +384,51 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     try { candleRef.current.update({ time:(last.time/1000) as any, open:last.open, high:Math.max(last.high,livePrice), low:Math.min(last.low,livePrice), close:livePrice }); } catch {}
   }, [livePrice, candles]);
 
+  // ── Indicator series ───────────────────────────────────────────────────
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !candles.length) return;
+    // Remove all old indicator series
+    indicatorSeriesRef.current.forEach(seriesArr => {
+      seriesArr.forEach(s => { try { chart.removeSeries(s); } catch {} });
+    });
+    indicatorSeriesRef.current.clear();
+    if (!activeIndicators.length) return;
+    const closes = candles.map(c => c.close);
+    const times  = candles.map(c => (c.time / 1000) as any);
+    const toData = (vals: (number|null)[]) => vals.map((v,i) => ({ time: times[i], value: v ?? undefined })).filter(d => d.value !== undefined) as any[];
+
+    for (const id of activeIndicators) {
+      const p = indicatorParams[id] ?? {};
+      if (id === 'sma') {
+        const n = p.period ?? 20;
+        const vals = indSMA(closes, n);
+        const s = chart.addSeries(LineSeries, { color:'#F59E0B', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        s.setData(toData(vals));
+        indicatorSeriesRef.current.set(id, [s]);
+      } else if (id === 'ema') {
+        const n = p.period ?? 21;
+        const vals = indEMA(closes, n);
+        const s = chart.addSeries(LineSeries, { color:'#818CF8', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        s.setData(toData(vals));
+        indicatorSeriesRef.current.set(id, [s]);
+      } else if (id === 'vwap') {
+        const vals = indVWAP(candles);
+        const s = chart.addSeries(LineSeries, { color:'#34D399', lineWidth:1, lineStyle:1, priceLineVisible:false, lastValueVisible:false });
+        s.setData(toData(vals));
+        indicatorSeriesRef.current.set(id, [s]);
+      } else if (id === 'bb') {
+        const n = p.period ?? 20; const mult = p.stddev ?? 2;
+        const { upper, mid, lower } = indBB(closes, n, mult);
+        const su = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.6)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        const sm = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.9)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        const sl = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.6)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+        su.setData(toData(upper)); sm.setData(toData(mid)); sl.setData(toData(lower));
+        indicatorSeriesRef.current.set(id, [su, sm, sl]);
+      }
+    }
+  }, [activeIndicators, indicatorParams, candles]);
+
   // ── Position lines ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!candleRef.current) return;
@@ -489,6 +578,14 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
 
         {hint&&<span className="text-[9px] text-[#2BFFF1]/60 ml-1 animate-pulse hidden sm:inline">{hint}</span>}
 
+        {onIntervalChange&&(
+          <div className="flex items-center gap-0.5 ml-1">
+            {CHART_INTERVALS.map(i=>(
+              <button key={i} onClick={()=>onIntervalChange(i)} className={`px-1.5 py-1 rounded text-[9px] font-bold transition-all ${interval===i?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#374151] hover:text-[#6B7280]'}`}>{i}</button>
+            ))}
+          </div>
+        )}
+
         <div className="ml-auto flex items-center gap-1">
           <span className="hidden xl:block text-[9px] text-[#2D3748]">Drag axis ↕ zoom · Right-click chart</span>
           {onOpenSettings&&(
@@ -572,6 +669,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           selected={activeIndicators}
           onToggle={(id, params) => {
             setActiveIndicators(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
+            if (params) setIndicatorParams(prev => ({ ...prev, [id]: params }));
           }}
           onClose={() => setShowIndicators(false)}
         />

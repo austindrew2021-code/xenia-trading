@@ -8,6 +8,7 @@ interface Token {
 }
 
 const KNOWN_TOKENS = [
+  { address:'So11111111111111111111111111111111111111112',  symbol:'SOL',     name:'Solana',              img:'https://assets.coingecko.com/coins/images/4128/small/solana.png', binance:'SOLUSDT' },
   { address:'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',symbol:'BONK',    name:'Bonk',                img:'https://assets.coingecko.com/coins/images/28600/small/bonk.jpg' },
   { address:'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',symbol:'WIF',     name:'dogwifhat',           img:'https://assets.coingecko.com/coins/images/33566/small/wif.png' },
   { address:'7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',symbol:'POPCAT',  name:'Popcat',              img:'https://assets.coingecko.com/coins/images/39580/small/popcat.png' },
@@ -46,10 +47,20 @@ function parsePair(p:any, fallback=''): Token|null {
 
 async function fetchKnown(): Promise<Token[]> {
   try {
-    const addrs=KNOWN_TOKENS.map(t=>t.address).join(',');
-    const r=await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addrs}`);
-    if(!r.ok) return fallbackKnown();
-    const d=await r.json(); const seen=new Set<string>(); const tokens:Token[]=[];
+    // Fetch SOL from Binance (accurate price), rest from DexScreener
+    const [dexR, solR] = await Promise.all([
+      fetch(`https://api.dexscreener.com/latest/dex/tokens/${KNOWN_TOKENS.filter(t=>!('binance' in t)).map(t=>t.address).join(',')}`),
+      fetch('https://api.binance.com/api/v3/ticker/24hr?symbol=SOLUSDT'),
+    ]);
+    if(!dexR.ok) return fallbackKnown();
+    const d=await dexR.json(); const seen=new Set<string>(); const tokens:Token[]=[];
+    // Add SOL first from Binance
+    if(solR.ok) {
+      const s=await solR.json();
+      const pr=parseFloat(s.lastPrice); const ch=parseFloat(s.priceChangePercent);
+      tokens.push({address:'So11111111111111111111111111111111111111112',name:'Solana',symbol:'SOL',price:pr,change24h:ch,volume24h:parseFloat(s.quoteVolume||'0'),mcap:pr*584_000_000,age:999,pairAddress:'So11111111111111111111111111111111111111112',imageUrl:'https://assets.coingecko.com/coins/images/4128/small/solana.png'});
+      seen.add('SOL');
+    }
     for(const p of (d.pairs||[])) {
       if(p.chainId!=='solana') continue;
       const sym=(p.baseToken?.symbol||'').toUpperCase(); if(seen.has(sym)) continue;

@@ -126,35 +126,63 @@ export function HomePage({ onNavigate, onShowWallet, onShowAuth }: Props) {
   const [showAll,       setShowAll]       = useState(false);
   const [favItems,      setFavItems]      = useState<string[]>(DEFAULT_FAVS);
   const [editingFavs,   setEditingFavs]   = useState(false);
-  const [ticker,        setTicker]        = useState<{symbol:string;change:number;price:string}[]>([]);
+  const [ticker,        setTicker]        = useState<{symbol:string;change:number;price:string;img:string}[]>([]);
+  const [marketTokens, setMarketTokens] = useState<{symbol:string;name:string;img:string;price:string;change:number}[]>([]);
   const tickerRef = useRef<HTMLDivElement>(null);
 
+  const TOKEN_IMGS: Record<string,string> = {
+    SOL:    'https://assets.coingecko.com/coins/images/4128/small/solana.png',
+    BONK:   'https://assets.coingecko.com/coins/images/28600/small/bonk.jpg',
+    WIF:    'https://assets.coingecko.com/coins/images/33566/small/wif.png',
+    POPCAT: 'https://assets.coingecko.com/coins/images/39580/small/popcat.png',
+    MEW:    'https://assets.coingecko.com/coins/images/36180/small/mew.png',
+    BOME:   'https://assets.coingecko.com/coins/images/36071/small/bome.png',
+    JUP:    'https://assets.coingecko.com/coins/images/35285/small/jup.png',
+    PNUT:   'https://assets.coingecko.com/coins/images/41169/small/pnut.png',
+  };
+  const TOKEN_NAMES: Record<string,string> = { SOL:'Solana', BONK:'Bonk', WIF:'dogwifhat', POPCAT:'Popcat', MEW:'cat in a dogs world', BOME:'Book of Meme', JUP:'Jupiter', PNUT:'Peanut' };
+
+  const fmtPr = (pr: number) => pr >= 1000 ? `$${pr.toFixed(2)}` : pr >= 1 ? `$${pr.toFixed(4)}` : pr >= 0.001 ? `$${pr.toFixed(6)}` : `$${pr.toFixed(9)}`;
+
   useEffect(() => {
-    // Fetch top Solana token prices for ticker
+    // Fetch top Solana token prices for ticker + home markets
     const load = async () => {
       try {
-        const addrs = [
-          'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK
-          'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm', // WIF
-          '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr', // POPCAT
-          'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREkzUo8THF',  // MEW
-          'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82',  // BOME
-          'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',  // JUP
-        ].join(',');
-        const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${addrs}`);
-        if (!r.ok) return;
-        const d = await r.json();
-        const seen = new Set<string>();
-        const items: {symbol:string;change:number;price:string}[] = [];
-        for (const p of (d.pairs || [])) {
-          const sym = p.baseToken?.symbol?.toUpperCase();
-          if (!sym || seen.has(sym)) continue;
-          seen.add(sym);
-          const pr = parseFloat(p.priceUsd||'0');
-          const prStr = pr >= 1 ? `$${pr.toFixed(4)}` : pr >= 0.001 ? `$${pr.toFixed(6)}` : `$${pr.toFixed(9)}`;
-          items.push({ symbol:sym, change:parseFloat(p.priceChange?.h24||'0'), price:prStr });
+        // SOL from Binance (accurate)
+        const [solR, dexR] = await Promise.all([
+          fetch('https://api.binance.com/api/v3/ticker/24hr?symbol=SOLUSDT'),
+          fetch(`https://api.dexscreener.com/latest/dex/tokens/${[
+            'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+            'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+            '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
+            'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREkzUo8THF',
+            'ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82',
+            'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+            '2qEHjDLDLbuBgRYvsxhc5D6uDWAivNFZGan56P1tpump',
+          ].join(',')}`),
+        ]);
+        const items: {symbol:string;change:number;price:string;img:string}[] = [];
+        // SOL first
+        if (solR.ok) {
+          const s = await solR.json();
+          const pr = parseFloat(s.lastPrice);
+          items.push({ symbol:'SOL', change:parseFloat(s.priceChangePercent), price:fmtPr(pr), img:TOKEN_IMGS['SOL'] });
         }
-        if (items.length > 0) setTicker(items);
+        if (dexR.ok) {
+          const d = await dexR.json();
+          const seen = new Set<string>(['SOL']);
+          for (const p of (d.pairs || [])) {
+            const sym = p.baseToken?.symbol?.toUpperCase();
+            if (!sym || seen.has(sym)) continue;
+            seen.add(sym);
+            const pr = parseFloat(p.priceUsd||'0');
+            items.push({ symbol:sym, change:parseFloat(p.priceChange?.h24||'0'), price:fmtPr(pr), img:TOKEN_IMGS[sym]||'' });
+          }
+        }
+        if (items.length > 0) {
+          setTicker(items);
+          setMarketTokens(items.slice(0, 6).map(t => ({ symbol:t.symbol, name:TOKEN_NAMES[t.symbol]||t.symbol, img:t.img, price:t.price, change:t.change })));
+        }
       } catch {}
     };
     load();
@@ -334,17 +362,16 @@ export function HomePage({ onNavigate, onShowWallet, onShowAuth }: Props) {
           <button onClick={()=>onNavigate('markets')} className="text-[10px] text-[#2BFFF1] hover:underline">View all →</button>
         </div>
         <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] overflow-hidden">
-          {[
-            {symbol:'SOL',   name:'Solana',        img:'https://assets.coingecko.com/coins/images/4128/small/solana.png',    change:'+4.21%', price:'$145.20',    up:true},
-            {symbol:'BONK',  name:'Bonk',           img:'https://assets.coingecko.com/coins/images/28600/small/bonk.jpg',    change:'-2.14%', price:'$0.0000187', up:false},
-            {symbol:'WIF',   name:'dogwifhat',      img:'https://assets.coingecko.com/coins/images/33566/small/wif.png',     change:'+8.33%', price:'$1.84',      up:true},
-            {symbol:'POPCAT',name:'Popcat',         img:'https://assets.coingecko.com/coins/images/39580/small/popcat.png',  change:'+1.02%', price:'$0.742',     up:true},
-          ].map((t,i)=>(
+          {(marketTokens.length > 0 ? marketTokens : [
+            {symbol:'SOL',change:0,price:'…',img:'https://assets.coingecko.com/coins/images/4128/small/solana.png',name:'Solana'},
+            {symbol:'BONK',change:0,price:'…',img:'https://assets.coingecko.com/coins/images/28600/small/bonk.jpg',name:'Bonk'},
+            {symbol:'WIF',change:0,price:'…',img:'https://assets.coingecko.com/coins/images/33566/small/wif.png',name:'dogwifhat'},
+            {symbol:'POPCAT',change:0,price:'…',img:'https://assets.coingecko.com/coins/images/39580/small/popcat.png',name:'Popcat'},
+          ]).map((t,i)=>(
             <button key={t.symbol} onClick={()=>onNavigate('markets')}
               className={`w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.025] transition-all text-left ${i>0?'border-t border-white/[0.04]':''}`}>
               <div className="flex items-center gap-2.5">
-                <img src={t.img} alt={t.symbol} className="w-8 h-8 rounded-full object-cover"
-                  onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>
+                {t.img?<img src={t.img} alt={t.symbol} className="w-8 h-8 rounded-full object-cover" onError={e=>{(e.target as HTMLImageElement).style.display='none';}}/>:<div className="w-8 h-8 rounded-full bg-[#0D1117] border border-white/[0.05] flex items-center justify-center text-[9px] font-black text-[#2BFFF1]">{t.symbol.slice(0,3)}</div>}
                 <div>
                   <p className="text-sm font-semibold text-[#F4F6FA]">{t.symbol}</p>
                   <p className="text-[9px] text-[#374151]">{t.name}</p>
@@ -352,7 +379,7 @@ export function HomePage({ onNavigate, onShowWallet, onShowAuth }: Props) {
               </div>
               <div className="text-right">
                 <p className="text-sm font-semibold text-[#F4F6FA]">{t.price}</p>
-                <p className={`text-xs ${t.up?'text-green-400':'text-red-400'}`}>{t.change}</p>
+                <p className={`text-xs font-bold ${t.change>=0?'text-green-400':'text-red-400'}`}>{t.change>=0?'+':''}{t.change.toFixed(2)}%</p>
               </div>
             </button>
           ))}

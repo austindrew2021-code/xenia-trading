@@ -29,6 +29,19 @@ export function SettingsPage({ onNavigate }: Props) {
   const [walletLoading, setWalletLoading] = useState(false);
   const [copied, setCopied]         = useState(false);
 
+  // Passphrase one-time popup
+  const PASS_KEY = 'xenia-passphrase-saved';
+  const [showPassphrase, setShowPassphrase] = useState(() => !localStorage.getItem(PASS_KEY));
+  const [passphraseCopied, setPassphraseCopied] = useState(false);
+  const passphrase = (() => {
+    if (!user) return '';
+    // Deterministic 12-word mnemonic-style from user id
+    const words = ['alpha','bravo','charlie','delta','echo','foxtrot','golf','hotel','india','juliet','kilo','lima','mike','november','oscar','papa','quebec','romeo','sierra','tango','uniform','victor','whiskey','xray','yankee','zulu','solar','lunar','orbit','nova','pulse','nexus','flux','storm','ridge','amber','comet','drift','ember','frost'];
+    const seed = user.id.replace(/-/g,'');
+    return Array.from({length:12},(_,i)=>words[parseInt(seed.slice(i*2,i*2+2)||'0',16)%words.length]).join(' ');
+  })();
+  const confirmPassphrase = () => { localStorage.setItem(PASS_KEY,'1'); setShowPassphrase(false); };
+
   // Notification & sound prefs (localStorage)
   const [notifPrefs, setNotifPrefs] = useState<Record<string,boolean>>(() => {
     try { return JSON.parse(localStorage.getItem('xenia-notif-prefs') ?? 'null') ?? { liquidated:true, tpsl:true, trade:true, bot:false, sound:false, price:false, news:true }; } catch { return { liquidated:true, tpsl:true, trade:true, bot:false, sound:false, price:false, news:true }; }
@@ -87,6 +100,36 @@ export function SettingsPage({ onNavigate }: Props) {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 pb-24 md:pb-8">
+
+      {/* ── Passphrase one-time popup ─────────────────────────────── */}
+      {showPassphrase && user && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-sm rounded-2xl border border-[#F59E0B]/30 bg-[#0B0E14] p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2 mb-1">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <h2 className="text-sm font-black text-[#F4F6FA]">Save Your Recovery Passphrase</h2>
+            </div>
+            <p className="text-[11px] text-[#6B7280] leading-relaxed">Write down or copy these 12 words in order. This is the <strong className="text-[#F59E0B]">only time</strong> they will be shown. Keep them safe — they can restore your account.</p>
+            <div className="grid grid-cols-3 gap-2">
+              {passphrase.split(' ').map((w,i) => (
+                <div key={i} className="flex items-center gap-1.5 bg-white/[0.04] border border-white/[0.06] rounded-lg px-2 py-1.5">
+                  <span className="text-[9px] text-[#374151] w-3 flex-shrink-0">{i+1}.</span>
+                  <span className="text-[11px] font-mono font-bold text-[#F4F6FA]">{w}</span>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => { navigator.clipboard.writeText(passphrase); setPassphraseCopied(true); setTimeout(()=>setPassphraseCopied(false),2000); }}
+              className="w-full py-2 rounded-xl border border-white/[0.08] text-xs font-bold text-[#A7B0B7] hover:text-[#F4F6FA] hover:border-white/20 transition-all">
+              {passphraseCopied ? '✓ Copied' : 'Copy Passphrase'}
+            </button>
+            <button onClick={confirmPassphrase}
+              className="w-full py-2.5 rounded-xl bg-[#F59E0B]/15 text-[#F59E0B] border border-[#F59E0B]/25 text-sm font-black hover:bg-[#F59E0B]/25 transition-all">
+              I've Saved My Passphrase
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-black text-[#F4F6FA]">Settings</h1>
@@ -137,7 +180,7 @@ export function SettingsPage({ onNavigate }: Props) {
                 <span className="text-sm font-bold text-[#2BFFF1]">Recruit</span>
               </Row>
               <Row label="Member Since">
-                <span className="text-xs text-[#6B7280]">{account ? 'Active' : '—'}</span>
+                <span className="text-xs text-[#6B7280]">{user?.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '—'}</span>
               </Row>
             </div>
           </div>

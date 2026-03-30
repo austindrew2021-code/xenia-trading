@@ -392,7 +392,7 @@ function MobileTrade({ assetId,livePrice,change24h,candles,prices,assetLabel,onC
           </div>
         )}
         {tab==='trade'&&<div className="overflow-y-auto h-full p-3 space-y-3"><TradeForm livePrice={livePrice} asset={assetLabel}/><IndicatorsPanel prices={prices}/><BuySellPressure candles={candles} livePrice={livePrice} asset={assetLabel} assetId={assetId}/></div>}
-        {tab==='bots'&&<div className="overflow-y-auto h-full p-3 space-y-3"><BotPanel/><ActivityLog/></div>}
+        {tab==='bots'&&<div className="overflow-y-auto h-full p-3 space-y-3"><LabBotPanel target="leverage" isMock={true} compact={true}/><BotPanel/><ActivityLog/></div>}
         {tab==='board'&&<div className="overflow-y-auto h-full p-4"><PointsLeaderboard/></div>}
       </div>
     </div>
@@ -593,6 +593,7 @@ export default function App() {
       <XeniaBotWidget/>
       {showWallet&&<WalletDepositModal onClose={()=>setShowWallet(false)}/>}
       {showPnlShare&&<PnlShareCard onClose={()=>setShowPnlShare(false)}/>}
+      {showTransfer&&<WalletTransfer onClose={()=>setShowTransfer(false)}/>}
       <TouchGrassModal show={showTG} onClose={tgSkip} onActivate={tgActivate}/>
     </div>
   );

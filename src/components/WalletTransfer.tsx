@@ -36,12 +36,19 @@ interface Props { onClose: () => void; defaultFrom?: Wallet; defaultTo?: Wallet;
 
 export function WalletTransfer({ onClose, defaultFrom, defaultTo }: Props) {
   const { user, account, saveAccount } = useAuth();
+  const [mode,      setMode]      = useState<'transfer'|'withdraw'>('transfer');
   const [from,      setFrom]      = useState<Wallet>(defaultFrom ?? 'funding');
   const [to,        setTo]        = useState<Wallet>(defaultTo ?? 'spot_mock');
   const [amount,    setAmount]    = useState('');
   const [saving,    setSaving]    = useState(false);
   const [msg,       setMsg]       = useState('');
   const [history,   setHistory]   = useState<any[]>([]);
+  // Withdraw state
+  const [wdFrom,    setWdFrom]    = useState<Wallet>('funding');
+  const [wdAddress, setWdAddress] = useState('');
+  const [wdAmount,  setWdAmount]  = useState('');
+  const [wdSaving,  setWdSaving]  = useState(false);
+  const [wdMsg,     setWdMsg]     = useState('');
 
   const fromBalance = getBalance(account, from);
   const amt = parseFloat(amount)||0;
@@ -81,6 +88,31 @@ export function WalletTransfer({ onClose, defaultFrom, defaultTo }: Props) {
     setTimeout(()=>setMsg(''),3000);
   };
 
+  const withdraw = async () => {
+    const amt = parseFloat(wdAmount)||0;
+    const fromBal = getBalance(account, wdFrom);
+    if(!user||!account||amt<=0||amt>fromBal) { setWdMsg(amt>fromBal?`Insufficient (${fmtUsd(fromBal)} available)`:'Enter valid amount'); return; }
+    if(!wdAddress.trim()||!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wdAddress.trim())) { setWdMsg('Enter a valid Solana address'); return; }
+    setWdSaving(true); setWdMsg('');
+    try {
+      const {data:{session}}=await supabase!.auth.getSession();
+      const token=session?.access_token??'';
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/withdraw`, {
+        method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
+        body:JSON.stringify({ fromWallet:wdFrom, toAddress:wdAddress.trim(), amount:amt, userId:user.id }),
+      });
+      const d = await r.json();
+      if(!r.ok) throw new Error(d.error??'Withdrawal failed');
+      // Deduct from local balance
+      const field=WALLET_FIELD_MAP[wdFrom];
+      await saveAccount({ [field]: Math.max(0, fromBal-amt) } as any);
+      if(supabase) await supabase.from('wallet_transfers').insert({ user_id:user.id, from_wallet:wdFrom, to_wallet:'external', amount:amt, is_mock:false, note:`To: ${wdAddress.trim().slice(0,8)}…` });
+      setWdMsg(`Withdrawal of ${fmtUsd(amt)} sent!${d.txHash?' Tx: '+d.txHash.slice(0,12)+'…':''}`);
+      setWdAmount(''); setWdAddress(''); await loadHistory();
+    } catch(e:any) { setWdMsg(e.message??'Withdrawal failed'); }
+    setWdSaving(false);
+  };
+
   const WalletSelect = ({ value, onChange, label }:{ value:Wallet; onChange:(v:Wallet)=>void; label:string }) => (
     <div>
       <label className="text-[10px] text-[#4B5563] block mb-1 font-semibold uppercase tracking-wide">{label}</label>
@@ -99,10 +131,16 @@ export function WalletTransfer({ onClose, defaultFrom, defaultTo }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] flex-shrink-0">
           <div>
-            <p className="text-sm font-black text-[#F4F6FA]">Transfer Funds</p>
-            <p className="text-[10px] text-[#374151]">Move balance between accounts instantly</p>
+            <p className="text-sm font-black text-[#F4F6FA]">{mode==='transfer'?'Transfer Funds':'Withdraw'}</p>
+            <p className="text-[10px] text-[#374151]">{mode==='transfer'?'Move balance between accounts instantly':'Send funds to external Solana wallet'}</p>
           </div>
           <button onClick={onClose} className="text-[#4B5563] hover:text-[#A7B0B7] p-1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        {/* Mode tabs */}
+        <div className="flex border-b border-white/[0.06] flex-shrink-0">
+          {(['transfer','withdraw'] as const).map(m=>(
+            <button key={m} onClick={()=>setMode(m)} className={`flex-1 py-2 text-[11px] font-bold capitalize transition-all ${mode===m?'text-[#2BFFF1] border-b-2 border-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{m}</button>
+          ))}
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
@@ -119,7 +157,40 @@ export function WalletTransfer({ onClose, defaultFrom, defaultTo }: Props) {
             ))}
           </div>
 
-          <WalletSelect value={from} onChange={setFrom} label="From"/>
+          {/* ── Withdraw form ───────────────────────────── */}
+          {mode==='withdraw'&&(
+            <>
+              <div>
+                <label className="text-[10px] text-[#4B5563] block mb-1 font-semibold uppercase tracking-wide">From Wallet</label>
+                <select value={wdFrom} onChange={e=>setWdFrom(e.target.value as Wallet)} className="w-full bg-[#05060B] border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40">
+                  {WALLETS.filter(w=>w.live).map(w=>(<option key={w.id} value={w.id}>{w.label} — ${getBalance(account,w.id).toFixed(2)}</option>))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-[#4B5563] block mb-1 font-semibold uppercase tracking-wide">Destination Address</label>
+                <input type="text" value={wdAddress} onChange={e=>setWdAddress(e.target.value)} placeholder="Solana wallet address (Base58)" className="w-full bg-[#05060B] border border-white/[0.08] rounded-xl px-3 py-2.5 text-xs text-[#F4F6FA] outline-none font-mono focus:border-[#2BFFF1]/40 break-all"/>
+              </div>
+              <div>
+                <label className="text-[10px] text-[#4B5563] block mb-1 font-semibold uppercase tracking-wide">Amount (USDC)</label>
+                <div className="flex gap-2">
+                  <div className="flex-1 flex items-center gap-1.5 bg-[#05060B] border border-white/[0.08] rounded-xl px-3 py-2.5 focus-within:border-[#2BFFF1]/40">
+                    <span className="text-[#374151]">$</span>
+                    <input type="number" value={wdAmount} onChange={e=>setWdAmount(e.target.value)} placeholder="0.00" className="flex-1 bg-transparent text-sm font-mono text-[#F4F6FA] outline-none" style={{minWidth:0}}/>
+                  </div>
+                  <button onClick={()=>setWdAmount(getBalance(account,wdFrom).toFixed(2))} className="px-3 py-2 rounded-xl border border-white/[0.08] text-xs font-bold text-[#2BFFF1] hover:bg-[#2BFFF1]/10 transition-all">MAX</button>
+                </div>
+                <p className="text-[9px] text-[#374151] mt-1">Available: {fmtUsd(getBalance(account,wdFrom))} · Network fee ~$0.02</p>
+              </div>
+              {wdMsg&&<div className={`rounded-xl px-3 py-2 text-xs font-semibold ${wdMsg.includes('failed')||wdMsg.includes('Insufficient')||wdMsg.includes('valid')?'text-red-400 bg-red-500/10 border border-red-500/15':'text-green-400 bg-green-500/10 border border-green-500/15'}`}>{wdMsg}</div>}
+              <button onClick={withdraw} disabled={wdSaving||!wdAddress||!wdAmount||parseFloat(wdAmount)<=0}
+                className="w-full py-3 rounded-xl text-sm font-black bg-orange-500/15 text-orange-400 border border-orange-500/25 hover:bg-orange-500/25 transition-all disabled:opacity-40">
+                {wdSaving?<span className="flex items-center justify-center gap-2"><div className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin"/>Withdrawing…</span>:`Withdraw ${wdAmount?fmtUsd(parseFloat(wdAmount)||0):''}` }
+              </button>
+              <p className="text-[9px] text-[#374151] text-center">Withdrawals send USDC on Solana mainnet via platform wallet</p>
+            </>
+          )}
+
+          {mode==='transfer'&&<><WalletSelect value={from} onChange={setFrom} label="From"/>
 
           {/* Swap arrow */}
           <div className="flex justify-center">
@@ -149,15 +220,15 @@ export function WalletTransfer({ onClose, defaultFrom, defaultTo }: Props) {
           <button onClick={transfer} disabled={saving||amt<=0||amt>fromBalance}
             className="w-full py-3 rounded-xl text-sm font-black bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
             {saving?<span className="flex items-center justify-center gap-2"><div className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin"/>Transferring…</span>:`Transfer ${amt>0?fmtUsd(amt):''}`}
-          </button>
+          </button></>}
 
           {/* History */}
           {history.length>0&&(
             <div>
-              <p className="text-[10px] text-[#4B5563] font-semibold uppercase tracking-wide mb-2">Recent Transfers</p>
+              <p className="text-[10px] text-[#4B5563] font-semibold uppercase tracking-wide mb-2">Recent {mode==='withdraw'?'Withdrawals':'Transfers'}</p>
               {history.map(h=>(
                 <div key={h.id} className="flex items-center justify-between py-1.5 border-b border-white/[0.04] last:border-0 text-[10px]">
-                  <span className="text-[#6B7280]">{WALLETS.find(w=>w.id===h.from_wallet)?.label} → {WALLETS.find(w=>w.id===h.to_wallet)?.label}</span>
+                  <span className="text-[#6B7280]">{WALLETS.find(w=>w.id===h.from_wallet)?.label??h.from_wallet} → {WALLETS.find(w=>w.id===h.to_wallet)?.label??h.to_wallet}{h.note?` (${h.note})`:''}</span>
                   <span className="font-mono text-[#F4F6FA]">${h.amount}</span>
                 </div>
               ))}

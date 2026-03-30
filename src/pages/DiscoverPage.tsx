@@ -7,6 +7,7 @@ const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL || 'htt
 type DiscoverTab = 'discover' | 'following' | 'news' | 'announcements' | 'events';
 
 interface Post { id:string; user_id:string; username:string; content:string; likes:number; comments_count:number; created_at:string; tags?:string[]; is_announcement:boolean; }
+interface Comment { id:string; post_id:string; user_id:string; username:string; content:string; created_at:string; }
 interface NewsItem { title:string; url:string; source:string; published_on:number; imageurl:string; body:string; }
 interface Event { id:string; title:string; description:string; reward:string; starts_at:string; ends_at:string; participants_count:number; max_participants:number|null; status:string; }
 
@@ -30,8 +31,45 @@ function PostCard({ post, liked, onLike, onFollow, following }: {
   post:Post; liked:boolean;
   onLike:(id:string)=>void; onFollow:(uid:string)=>void; following:string[];
 }) {
-  const { user } = useAuth();
+  const { user, account } = useAuth();
   const isFollowing = following.includes(post.user_id);
+  const [showComments, setShowComments] = useState(false);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentText, setCommentText] = useState('');
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const [commentsCount, setCommentsCount] = useState(post.comments_count ?? 0);
+
+  const loadComments = async () => {
+    if (!supabase) return;
+    setLoadingComments(true);
+    const { data } = await supabase.from('community_comments').select('*').eq('post_id', post.id).order('created_at', { ascending: true }).limit(50);
+    setComments((data ?? []) as Comment[]);
+    setLoadingComments(false);
+  };
+
+  const toggleComments = () => {
+    if (!showComments) loadComments();
+    setShowComments(v => !v);
+  };
+
+  const submitComment = async () => {
+    if (!supabase || !user || !commentText.trim()) return;
+    setPosting(true);
+    const { error } = await supabase.from('community_comments').insert({
+      post_id: post.id, user_id: user.id,
+      username: account?.username ?? user.email?.split('@')[0] ?? 'Trader',
+      content: commentText.trim().slice(0, 280),
+    });
+    if (!error) {
+      await supabase.from('community_posts').update({ comments_count: commentsCount + 1 }).eq('id', post.id);
+      setCommentsCount(c => c + 1);
+      setCommentText('');
+      loadComments();
+    }
+    setPosting(false);
+  };
+
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 hover:border-white/[0.1] transition-all">
       <div className="flex items-start justify-between gap-3 mb-3">
@@ -63,11 +101,45 @@ function PostCard({ post, liked, onLike, onFollow, following }: {
           <svg width="13" height="13" viewBox="0 0 24 24" fill={liked?'currentColor':'none'} stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
           {post.likes ?? 0}
         </button>
-        <span className="flex items-center gap-1.5 text-[11px] text-[#4B5563]">
+        <button onClick={toggleComments}
+          className={`flex items-center gap-1.5 text-[11px] font-semibold transition-all ${showComments?'text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-          {post.comments_count ?? 0}
-        </span>
+          {commentsCount}
+        </button>
       </div>
+
+      {showComments && (
+        <div className="mt-3 pt-3 border-t border-white/[0.05] space-y-2">
+          {loadingComments ? (
+            <div className="flex items-center gap-2 text-[#4B5563] text-[10px]"><div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>Loading…</div>
+          ) : comments.length === 0 ? (
+            <p className="text-[10px] text-[#374151]">No comments yet</p>
+          ) : comments.map(c => (
+            <div key={c.id} className="flex gap-2">
+              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#A78BFA] to-[#2BFFF1] flex items-center justify-center text-[8px] font-black text-[#05060B] flex-shrink-0">
+                {(c.username||'U')[0].toUpperCase()}
+              </div>
+              <div className="flex-1 bg-white/[0.03] rounded-xl px-2.5 py-1.5">
+                <span className="text-[10px] font-bold text-[#2BFFF1]">{c.username}</span>
+                <span className="text-[10px] text-[#6B7280]"> · {timeAgo(c.created_at)}</span>
+                <p className="text-[11px] text-[#A7B0B7] mt-0.5">{c.content}</p>
+              </div>
+            </div>
+          ))}
+          {user && (
+            <div className="flex gap-2 mt-2">
+              <input value={commentText} onChange={e => setCommentText(e.target.value.slice(0,280))}
+                onKeyDown={e => e.key==='Enter' && !e.shiftKey && submitComment()}
+                placeholder="Write a comment…"
+                className="flex-1 bg-[#05060B] border border-white/[0.08] rounded-xl px-3 py-1.5 text-xs text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40 placeholder-[#374151]"/>
+              <button onClick={submitComment} disabled={posting||!commentText.trim()}
+                className="px-3 py-1.5 rounded-xl text-[10px] font-bold text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/10 transition-all disabled:opacity-40">
+                {posting?'…':'Post'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

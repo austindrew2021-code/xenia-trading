@@ -254,6 +254,9 @@ export function BotLabPage() {
   const [editing,     setEditing]    = useState<Partial<CustomBot>|null|'new'>(null);
   const [tab,         setTab]        = useState<'lab'|'active'|'market'>('lab');
   const [deploying,   setDeploying]  = useState<CustomBot|null>(null);
+  const [publicBots,  setPublicBots] = useState<CustomBot[]>([]);
+  const [marketLoading,setMarketLoad]= useState(false);
+  const [usingBot,    setUsingBot]   = useState<string|null>(null);
 
   const load = async () => {
     if(!supabase||!user){setLoading(false);return;}
@@ -263,8 +266,34 @@ export function BotLabPage() {
     setLoading(false);
   };
 
+  const loadMarket = async () => {
+    if(!supabase) return;
+    setMarketLoad(true);
+    const {data}=await supabase.from('custom_bots').select('*').eq('is_public',true).neq('status','archived').order('use_count',{ascending:false}).limit(50);
+    setPublicBots((data??[]) as CustomBot[]);
+    setMarketLoad(false);
+  };
+
+  const usePublicBot = async (bot: CustomBot) => {
+    if(!supabase||!user) return;
+    setUsingBot(bot.id);
+    // Clone bot into user's lab
+    await supabase.from('custom_bots').insert({
+      user_id:user.id, name:`${bot.name} (copy)`, description:bot.description,
+      status:'lab', is_public:false, indicators:bot.indicators,
+      candle_patterns:bot.candle_patterns, entry_rules:bot.entry_rules,
+      exit_rules:bot.exit_rules, risk_rules:bot.risk_rules, fee_pct:0,
+    });
+    // Increment use_count on original
+    await supabase.from('custom_bots').update({use_count:bot.use_count+1}).eq('id',bot.id);
+    setUsingBot(null);
+    setTab('lab');
+    await load();
+  };
+
   // Load on mount + when user changes
   useEffect(()=>{ load(); },[user]);
+  useEffect(()=>{ if(tab==='market') loadMarket(); },[tab]);
 
   // Reload when a bot is created from XeniaBot (custom DOM event)
   useEffect(()=>{
@@ -398,9 +427,37 @@ export function BotLabPage() {
               <div className="space-y-3">
                 <div className="rounded-xl border border-[#2BFFF1]/15 bg-[#2BFFF1]/05 px-4 py-3">
                   <p className="text-xs font-semibold text-[#2BFFF1]">Bot Marketplace</p>
-                  <p className="text-[10px] text-[#6B7280] mt-0.5">Discover and use community-built public bots. Creators earn a fee when their bot is used.</p>
+                  <p className="text-[10px] text-[#6B7280] mt-0.5">Discover and use community-built public bots. "Use Bot" copies it to your Lab where you can deploy it.</p>
                 </div>
-                <div className="text-center py-8"><p className="text-sm text-[#4B5563]">No public bots yet — be the first to publish one!</p></div>
+                {marketLoading?(
+                  <div className="flex items-center justify-center py-10 gap-2 text-[#4B5563]"><div className="w-5 h-5 border-2 border-[#2BFFF1]/20 border-t-[#2BFFF1] rounded-full animate-spin"/><span className="text-xs">Loading bots…</span></div>
+                ):publicBots.length===0?(
+                  <div className="text-center py-8">
+                    <p className="text-sm text-[#4B5563]">No public bots yet</p>
+                    <p className="text-[10px] text-[#374151] mt-1">Build a bot in The Lab and set it to Public to list it here</p>
+                  </div>
+                ):publicBots.map(b=>(
+                  <div key={b.id} className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 space-y-2.5">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-black text-[#F4F6FA] truncate">{b.name}</p>
+                        <p className="text-[10px] text-[#4B5563] truncate">{b.description||'No description'}</p>
+                      </div>
+                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border border-[#2BFFF1]/30 text-[#2BFFF1] bg-[#2BFFF1]/10 ml-2 flex-shrink-0">Public</span>
+                    </div>
+                    <div className="flex gap-3 text-[9px]">
+                      <div className="text-center"><p className="text-[#4B5563]">Indicators</p><p className="font-bold text-[#F4F6FA]">{b.indicators.length}</p></div>
+                      <div className="text-center"><p className="text-[#4B5563]">Uses</p><p className="font-bold text-[#F4F6FA]">{b.use_count}</p></div>
+                      {b.win_rate!=null&&<div className="text-center"><p className="text-[#4B5563]">Win%</p><p className="font-bold text-green-400">{(b.win_rate*100).toFixed(0)}%</p></div>}
+                      {b.total_pnl!==0&&<div className="text-center"><p className="text-[#4B5563]">PnL</p><p className={`font-bold ${b.total_pnl>=0?'text-green-400':'text-red-400'}`}>${Math.abs(b.total_pnl).toFixed(0)}</p></div>}
+                      {b.fee_pct>0&&<div className="text-center"><p className="text-[#4B5563]">Fee</p><p className="font-bold text-[#F59E0B]">{(b.fee_pct*100).toFixed(1)}%</p></div>}
+                    </div>
+                    <button onClick={()=>user?usePublicBot(b):undefined} disabled={!user||usingBot===b.id}
+                      className="w-full py-2 rounded-xl text-xs font-bold bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
+                      {usingBot===b.id?'Copying…':user?'Use Bot (copy to Lab)':'Sign in to use'}
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </>
