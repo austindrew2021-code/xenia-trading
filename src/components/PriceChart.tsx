@@ -503,9 +503,18 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || !candles.length) return;
-    // Remove all old indicator series
+    // Remove all old indicator series (price lines use removePriceLine, chart series use removeSeries)
     indicatorSeriesRef.current.forEach(seriesArr => {
-      seriesArr.forEach(s => { try { chart.removeSeries(s); } catch {} });
+      seriesArr.forEach(s => {
+        try {
+          // Price lines (FVG, BOS, etc.) have no .priceScale method — detect via duck-typing
+          if (typeof (s as any).applyOptions === 'function' && typeof (s as any).setData === 'function') {
+            chart.removeSeries(s);
+          } else {
+            candleRef.current?.removePriceLine(s);
+          }
+        } catch {}
+      });
     });
     indicatorSeriesRef.current.clear();
     if (!activeIndicators.length) return;
@@ -628,6 +637,156 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
       } else if (id === 'adx') {
         const n = p.period ?? 14;
         indicatorSeriesRef.current.set(id, osc('adx_scale','#F472B6',indADX(candles,n)));
+      } else if (id === 'alma') {
+        const n=p.period??21; const sigma=p.sigma??6;
+        const m=Math.floor(0.85*(n-1)); const s=n/sigma;
+        const ws=Array.from({length:n},(_,j)=>Math.exp(-((j-m)**2)/(2*s*s)));
+        const wsum=ws.reduce((a,b)=>a+b,0);
+        const alma=closes.map((_,i)=>{if(i<n-1)return null;const sl=closes.slice(i-n+1,i+1);return sl.reduce((a,v,j)=>a+v*ws[j],0)/wsum;});
+        const s1=chart.addSeries(LineSeries,{color:'#E879F9',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+        s1.setData(toData(alma)); indicatorSeriesRef.current.set(id,[s1]);
+      } else if (id === 'cci') {
+        const n=p.period??20;
+        const vals=candles.map((_,i)=>{if(i<n-1)return null;const sl=candles.slice(i-n+1,i+1);const tp=sl.map(c=>(c.high+c.low+c.close)/3);const mean=tp.reduce((a,b)=>a+b,0)/n;const md=tp.reduce((a,v)=>a+Math.abs(v-mean),0)/n;return md===0?0:((candles[i].high+candles[i].low+candles[i].close)/3-mean)/(0.015*md);});
+        indicatorSeriesRef.current.set(id,osc('cci_scale','#F59E0B',vals));
+      } else if (id === 'roc') {
+        const n=p.period??12;
+        const vals=closes.map((v,i)=>i<n?null:((v-closes[i-n])/closes[i-n])*100);
+        indicatorSeriesRef.current.set(id,osc('roc_scale','#34D399',vals));
+      } else if (id === 'willr') {
+        const n=p.period??14;
+        const vals=candles.map((_,i)=>{if(i<n-1)return null;const sl=candles.slice(i-n+1,i+1);const hi=Math.max(...sl.map(c=>c.high)),lo=Math.min(...sl.map(c=>c.low));return hi===lo?-50:((hi-candles[i].close)/(hi-lo))*-100;});
+        indicatorSeriesRef.current.set(id,osc('willr_scale','#A78BFA',vals));
+      } else if (id === 'mfi') {
+        const n=p.period??14;
+        const vals=candles.map((_,i)=>{if(i<n)return null;const sl=candles.slice(i-n+1,i+1);let pos=0,neg=0;for(let j=1;j<sl.length;j++){const tp=(sl[j].high+sl[j].low+sl[j].close)/3;const ptp=(sl[j-1].high+sl[j-1].low+sl[j-1].close)/3;const mf=tp*sl[j].volume;tp>ptp?pos+=mf:neg+=mf;}return neg===0?100:100-100/(1+pos/neg);});
+        indicatorSeriesRef.current.set(id,osc('mfi_scale','#4ADE80',vals));
+      } else if (id === 'aroon') {
+        const n=p.period??25;
+        const up=candles.map((_,i)=>{if(i<n)return null;const sl=candles.slice(i-n+1,i+1);const hi=Math.max(...sl.map(c=>c.high));let pos=0;for(let j=sl.length-1;j>=0;j--)if(sl[j].high===hi){pos=j;break;}return((pos)/n)*100;});
+        const dn=candles.map((_,i)=>{if(i<n)return null;const sl=candles.slice(i-n+1,i+1);const lo=Math.min(...sl.map(c=>c.low));let pos=0;for(let j=sl.length-1;j>=0;j--)if(sl[j].low===lo){pos=j;break;}return((pos)/n)*100;});
+        indicatorSeriesRef.current.set(id,osc('aroon_scale','#4ADE80',up,'#F87171',dn));
+      } else if (id === 'ultimate') {
+        const p1=p.p1??7,p2=p.p2??14,p3=p.p3??28;
+        const bp=candles.map((c,i)=>i===0?0:c.close-Math.min(c.low,candles[i-1].close));
+        const tr2=candles.map((c,i)=>i===0?c.high-c.low:Math.max(c.high,candles[i-1].close)-Math.min(c.low,candles[i-1].close));
+        const vals=candles.map((_,i)=>{if(i<p3)return null;const avg=(n:number)=>{let b=0,t=0;for(let j=i-n+1;j<=i;j++){b+=bp[j];t+=tr2[j];}return t===0?0:b/t;};return 100*(4*avg(p1)+2*avg(p2)+avg(p3))/(4+2+1);});
+        indicatorSeriesRef.current.set(id,osc('uo_scale','#FB923C',vals));
+      } else if (id === 'stddev') {
+        const n=p.period??20;
+        const vals=closes.map((_,i)=>{if(i<n-1)return null;const sl=closes.slice(i-n+1,i+1);const mean=sl.reduce((a,b)=>a+b,0)/n;return Math.sqrt(sl.reduce((a,v)=>a+(v-mean)**2,0)/n);});
+        indicatorSeriesRef.current.set(id,osc('stddev_scale','#94A3B8',vals));
+      } else if (id === 'chaikin') {
+        const n=p.period??10;
+        const hl=candles.map(c=>c.high-c.low);
+        const ema1=indEMA(hl,n),ema2=indEMA(hl,n*2);
+        const vals=hl.map((_,i)=>ema1[i]!==null&&ema2[i]!==null?((ema1[i] as number)-(ema2[i] as number))/(ema2[i] as number)*100:null);
+        indicatorSeriesRef.current.set(id,osc('chvol_scale','#7DD3FC',vals));
+      } else if (id === 'volosc') {
+        const fast=p.fast??5,slow=p.slow??10;
+        const vols=candles.map(c=>c.volume);
+        const fe=indEMA(vols,fast),se=indEMA(vols,slow);
+        const vals=vols.map((_,i)=>fe[i]!==null&&se[i]!==null&&(se[i] as number)!==0?((fe[i] as number)-(se[i] as number))/(se[i] as number)*100:null);
+        indicatorSeriesRef.current.set(id,osc('volosc_scale','#38BDF8',vals));
+      } else if (id === 'cmf') {
+        const n=p.period??20;
+        const vals=candles.map((_,i)=>{if(i<n-1)return null;const sl=candles.slice(i-n+1,i+1);let mfv=0,vol=0;for(const c of sl){const hl=c.high-c.low;const clv=hl===0?0:((c.close-c.low)-(c.high-c.close))/hl;mfv+=clv*c.volume;vol+=c.volume;}return vol===0?0:mfv/vol;});
+        indicatorSeriesRef.current.set(id,osc('cmf_scale','#2DD4BF',vals));
+      } else if (id === 'vpt') {
+        const vals:(number|null)[]=[null];
+        let acc=0;
+        for(let i=1;i<candles.length;i++){acc+=candles[i].volume*((candles[i].close-candles[i-1].close)/candles[i-1].close);vals.push(acc);}
+        indicatorSeriesRef.current.set(id,osc('vpt_scale','#A3E635',vals));
+      } else if (id === 'force') {
+        const n=p.period??13;
+        const raw=candles.map((c,i)=>i===0?null:(c.close-candles[i-1].close)*c.volume);
+        const clean=raw.filter(v=>v!==null) as number[];
+        const ema=indEMA(clean,n);
+        const off=raw.findIndex(v=>v!==null);
+        const vals:(number|null)[]=new Array(candles.length).fill(null);
+        for(let i=0;i<ema.length;i++) vals[off+i]=ema[i];
+        indicatorSeriesRef.current.set(id,osc('force_scale','#F97316',vals));
+      } else if (id === 'eom') {
+        const n=p.period??14;
+        const raw=candles.map((c,i)=>{if(i===0)return null;const mid=(c.high+c.low)/2-(candles[i-1].high+candles[i-1].low)/2;const br=(c.high-c.low)/(c.volume/1e6||1);return br===0?0:mid/br;});
+        const clean=raw.filter(v=>v!==null) as number[];
+        const sma=indSMA(clean,n);
+        const off=raw.findIndex(v=>v!==null);
+        const vals:(number|null)[]=new Array(candles.length).fill(null);
+        for(let i=0;i<sma.length;i++) vals[off+i]=sma[i];
+        indicatorSeriesRef.current.set(id,osc('eom_scale','#D946EF',vals));
+      } else if (id === 'dmi') {
+        const n=p.period??14;
+        const tr=candles.map((c,i)=>i===0?c.high-c.low:Math.max(c.high-c.low,Math.abs(c.high-candles[i-1].close),Math.abs(c.low-candles[i-1].close)));
+        const pdm=candles.map((c,i)=>i===0?0:Math.max(c.high-candles[i-1].high,0));
+        const ndm=candles.map((c,i)=>i===0?0:Math.max(candles[i-1].low-c.low,0));
+        const atr=indSMA(tr,n),pdi=indSMA(pdm,n),ndi=indSMA(ndm,n);
+        const pDI=tr.map((_,i)=>atr[i]&&atr[i]!==0?((pdi[i] as number)/(atr[i] as number))*100:null);
+        const nDI=tr.map((_,i)=>atr[i]&&atr[i]!==0?((ndi[i] as number)/(atr[i] as number))*100:null);
+        indicatorSeriesRef.current.set(id,osc('dmi_scale','#4ADE80',pDI,'#F87171',nDI));
+      } else if (id === 'ichimoku') {
+        const ten=candles.map((_,i)=>{if(i<8)return null;const sl=candles.slice(i-8,i+1);return(Math.max(...sl.map(c=>c.high))+Math.min(...sl.map(c=>c.low)))/2;});
+        const kij=candles.map((_,i)=>{if(i<25)return null;const sl=candles.slice(i-25,i+1);return(Math.max(...sl.map(c=>c.high))+Math.min(...sl.map(c=>c.low)))/2;});
+        const sA=candles.map((_,i)=>ten[i]!==null&&kij[i]!==null?((ten[i] as number)+(kij[i] as number))/2:null);
+        const sB=candles.map((_,i)=>{if(i<51)return null;const sl=candles.slice(i-51,i+1);return(Math.max(...sl.map(c=>c.high))+Math.min(...sl.map(c=>c.low)))/2;});
+        const s1=chart.addSeries(LineSeries,{color:'#22D3EE',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+        const s2=chart.addSeries(LineSeries,{color:'#F87171',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+        const s3=chart.addSeries(LineSeries,{color:'rgba(74,222,128,0.4)',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+        const s4=chart.addSeries(LineSeries,{color:'rgba(248,113,113,0.4)',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+        s1.setData(toData(ten)); s2.setData(toData(kij)); s3.setData(toData(sA)); s4.setData(toData(sB));
+        indicatorSeriesRef.current.set(id,[s1,s2,s3,s4]);
+      } else if (id === 'fvg') {
+        // Fair Value Gaps — mark as price lines (top/bottom of gap)
+        const lines: any[]=[];
+        for(let i=2;i<candles.length;i++){
+          const prev=candles[i-2],curr=candles[i];
+          if(curr.low>prev.high){const pl=candleRef.current?.createPriceLine({price:(curr.low+prev.high)/2,lineWidth:1,lineStyle:2,color:'rgba(74,222,128,0.5)',axisLabelVisible:false,title:'FVG↑'});if(pl)lines.push(pl);}
+          else if(curr.high<prev.low){const pl=candleRef.current?.createPriceLine({price:(curr.high+prev.low)/2,lineWidth:1,lineStyle:2,color:'rgba(248,113,113,0.5)',axisLabelVisible:false,title:'FVG↓'});if(pl)lines.push(pl);}
+        }
+        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
+      } else if (id === 'sweep') {
+        const lb=p.lookback??20;
+        const lines: any[]=[];
+        for(let i=lb;i<candles.length-1;i++){
+          const window=candles.slice(i-lb,i);
+          const hi=Math.max(...window.map(c=>c.high)),lo=Math.min(...window.map(c=>c.low));
+          if(candles[i].high>hi&&candles[i+1]?.close<hi){const pl=candleRef.current?.createPriceLine({price:hi,lineWidth:1,lineStyle:1,color:'rgba(251,146,60,0.6)',axisLabelVisible:true,title:'Sweep↑'});if(pl)lines.push(pl);}
+          if(candles[i].low<lo&&candles[i+1]?.close>lo){const pl=candleRef.current?.createPriceLine({price:lo,lineWidth:1,lineStyle:1,color:'rgba(251,146,60,0.6)',axisLabelVisible:true,title:'Sweep↓'});if(pl)lines.push(pl);}
+        }
+        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
+      } else if (id === 'bos') {
+        const lines: any[]=[];
+        let lastHH=candles[0]?.high??0,lastLL=candles[0]?.low??0;
+        for(let i=3;i<candles.length;i++){
+          if(candles[i].close>lastHH){const pl=candleRef.current?.createPriceLine({price:lastHH,lineWidth:1,lineStyle:0,color:'rgba(74,222,128,0.7)',axisLabelVisible:true,title:'BOS↑'});if(pl)lines.push(pl);lastHH=candles[i].high;}
+          if(candles[i].close<lastLL){const pl=candleRef.current?.createPriceLine({price:lastLL,lineWidth:1,lineStyle:0,color:'rgba(248,113,113,0.7)',axisLabelVisible:true,title:'BOS↓'});if(pl)lines.push(pl);lastLL=candles[i].low;}
+          if(candles[i].high>lastHH) lastHH=candles[i].high;
+          if(candles[i].low<lastLL) lastLL=candles[i].low;
+        }
+        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
+      } else if (id === 'choch') {
+        const lines: any[]=[];
+        let trend=0;
+        for(let i=3;i<candles.length;i++){
+          const up=candles[i].close>candles[i-1].high&&candles[i-1].close>candles[i-2].close;
+          const dn=candles[i].close<candles[i-1].low&&candles[i-1].close<candles[i-2].close;
+          if(up&&trend<0){const pl=candleRef.current?.createPriceLine({price:candles[i].close,lineWidth:2,lineStyle:0,color:'rgba(74,222,128,0.8)',axisLabelVisible:true,title:'CHoCH↑'});if(pl)lines.push(pl);trend=1;}
+          if(dn&&trend>0){const pl=candleRef.current?.createPriceLine({price:candles[i].close,lineWidth:2,lineStyle:0,color:'rgba(248,113,113,0.8)',axisLabelVisible:true,title:'CHoCH↓'});if(pl)lines.push(pl);trend=-1;}
+          if(up&&trend===0) trend=1; if(dn&&trend===0) trend=-1;
+        }
+        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
+      } else if (id === 'ifvg') {
+        const lines: any[]=[];
+        for(let i=2;i<candles.length;i++){
+          const prev=candles[i-2],curr=candles[i];
+          // FVG that gets filled (inverted) = price trades back through the gap
+          if(curr.low>prev.high&&i+5<candles.length){
+            const midGap=(curr.low+prev.high)/2;
+            const filled=candles.slice(i+1,i+6).some(c=>c.low<=midGap);
+            if(filled){const pl=candleRef.current?.createPriceLine({price:midGap,lineWidth:1,lineStyle:3,color:'rgba(167,139,250,0.5)',axisLabelVisible:false,title:'IFVG'});if(pl)lines.push(pl);}
+          }
+        }
+        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
       }
     }
   }, [activeIndicators, indicatorParams, candles]);

@@ -270,9 +270,12 @@ export function SettingsPage({ onNavigate }: Props) {
             <h2 className="text-sm font-bold text-[#F4F6FA] mb-3">Account Balances</h2>
             <div className="space-y-0">
               {[
-                ['Mock Trading', `$${(account?.mock_balance ?? 0).toFixed(2)}`],
-                ['Live Trading', `$${(account?.real_balance ?? 0).toFixed(2)}`],
-                ['Mode', account?.use_real ? 'Live' : 'Mock'],
+                ['Funding / Leverage (Live)', `$${(account?.real_balance ?? 0).toFixed(2)}`],
+                ['Spot (Live)',               `$${(account?.spot_live_balance ?? 0).toFixed(2)}`],
+                ['Bots (Live)',               `$${(account?.bot_balance ?? 0).toFixed(2)}`],
+                ['Mock Trading',             `$${(account?.mock_balance ?? 0).toFixed(2)}`],
+                ['Bots (Mock)',              `$${(account?.bot_mock_balance ?? 0).toFixed(2)}`],
+                ['Mode',                     account?.use_real ? 'Live' : 'Mock'],
               ].map(([l, v]) => (
                 <Row key={l} label={l}><span className="text-sm font-mono font-bold text-[#F4F6FA]">{v}</span></Row>
               ))}

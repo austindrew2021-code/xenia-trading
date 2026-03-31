@@ -68,6 +68,7 @@ export function WalletTransfer({ onClose, defaultFrom, defaultTo }: Props) {
       return;
     }
     if(from===to){setMsg('Cannot transfer to the same wallet');return;}
+    if(WALLET_FIELD_MAP[from]===WALLET_FIELD_MAP[to]){setMsg('These wallets share the same balance pool — no transfer needed');return;}
     setSaving(true); setMsg('');
 
     // Update balances locally

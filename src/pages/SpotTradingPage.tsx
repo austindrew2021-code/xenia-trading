@@ -119,8 +119,8 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
   const [txStatus,setStatus] = useState<{type:'success'|'error';msg:string}|null>(null);
   const [showAnim,setShowAnim] = useState<{side:'buy'|'sell';symbol:string;amount:string}|null>(null);
 
-  // Use mock_balance from account (same as leverage mock balance)
-  const balance = account ? (isMock ? account.mock_balance : account.real_balance) : capital;
+  // Mock uses mock_balance; live spot uses spot_live_balance (funded via Transfer → Spot Live)
+  const balance = account ? (isMock ? account.mock_balance : (account.spot_live_balance ?? account.real_balance)) : capital;
   const amtN = parseFloat(amountUsd)||0;
   const feeP = isMock ? MOCK_FEE : LIVE_FEE;
   const feeUsd = amtN * feeP;
@@ -153,8 +153,9 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
 
   const executeTrade = async () => {
     if(orderType==='limit') { placeLimitOrder(); return; }
+    if(!supabase) { setStatus({type:'error',msg:'Not connected to server'}); return; }
     if(!user||!token||amtN<=0) return;
-    if(amtN>balance) { setStatus({type:'error',msg:'Insufficient balance'}); return; }
+    if(amtN>balance) { setStatus({type:'error',msg:`Insufficient balance ($${balance.toFixed(2)} available)`}); return; }
     setExec(true); setStatus(null);
     try {
       const authToken = await getAuth();
@@ -186,17 +187,28 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
           const fee = amtN * MOCK_FEE;
           const newBal = side==='buy' ? (account?.mock_balance??0) - amtN - fee : (account?.mock_balance??0) + amtN - fee;
           if(newBal < 0) throw new Error('Insufficient mock balance');
-          const tokenAmount = side==='buy' ? amtN/livePrice : 0;
+          const tokenAmount = side==='buy' ? amtN/livePrice : amtN/livePrice;
           await Promise.all([
             supabase.from('trading_accounts').update({ mock_balance: Math.max(0, newBal) }).eq('user_id', user.id),
             supabase.from('spot_trades').insert({
               user_id:user.id, token_mint:token.mint, token_symbol:token.symbol, token_name:token.name,
               side, amount_token:tokenAmount, amount_usd:amtN, price_usd:livePrice, fee_usd:fee, is_mock:true, status:'filled',
             }),
-            side==='buy' ? supabase.from('spot_holdings').upsert({
-              user_id:user.id, token_mint:token.mint, token_symbol:token.symbol, token_name:token.name,
-              amount:tokenAmount, avg_cost:livePrice, is_mock:true, updated_at:new Date().toISOString(),
-            }, { onConflict:'user_id,token_mint,is_mock' }) : Promise.resolve(),
+            side==='buy'
+              ? supabase.from('spot_holdings').upsert({
+                  user_id:user.id, token_mint:token.mint, token_symbol:token.symbol, token_name:token.name,
+                  amount:tokenAmount, avg_cost:livePrice, is_mock:true, updated_at:new Date().toISOString(),
+                }, { onConflict:'user_id,token_mint,is_mock' })
+              : supabase.from('spot_holdings')
+                  .select('amount')
+                  .eq('user_id',user.id).eq('token_mint',token.mint).eq('is_mock',true).single()
+                  .then(({data:h})=>{
+                    if(!h) return;
+                    const remaining=Math.max(0,(h.amount||0)-tokenAmount);
+                    return remaining > 0
+                      ? supabase!.from('spot_holdings').update({amount:remaining,updated_at:new Date().toISOString()}).eq('user_id',user.id).eq('token_mint',token.mint).eq('is_mock',true)
+                      : supabase!.from('spot_holdings').delete().eq('user_id',user.id).eq('token_mint',token.mint).eq('is_mock',true);
+                  }),
           ]);
           saveAccount({ mock_balance: Math.max(0, newBal) } as any);
         } else if(!mockSuccess) {
@@ -221,15 +233,21 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
           setStatus({type:'success',msg:platResult.message ?? 'Trade executed via platform wallet'});
           // Refresh balance from DB
           if(supabase && user) {
-            const { data: freshAcct } = await supabase.from('trading_accounts').select('real_balance,mock_balance').eq('user_id', user.id).single();
-            if(freshAcct) saveAccount({ real_balance: freshAcct.real_balance, mock_balance: freshAcct.mock_balance } as any);
+            const { data: freshAcct } = await supabase.from('trading_accounts').select('real_balance,mock_balance,spot_live_balance').eq('user_id', user.id).single();
+            if(freshAcct) saveAccount({ real_balance: freshAcct.real_balance, mock_balance: freshAcct.mock_balance, spot_live_balance: freshAcct.spot_live_balance ?? 0 } as any);
           }
           setAmt(''); setPct(0); onSuccess();
           setExec(false); return;
         }
         // Platform wallet not available (no funds/wallet) — fall back to Phantom
+        // Give a helpful error if the account/balance issue is server-side
+        const platErr = platResult.error ?? '';
         const phantom = (window as any).solana ?? (window as any).solflare;
-        if(!phantom) throw new Error(platResult.error ?? 'No Solana wallet found. Fund your platform wallet or install Phantom.');
+        if(!phantom) throw new Error(
+          platErr.toLowerCase().includes('account') || platErr.toLowerCase().includes('balance')
+            ? `Insufficient Spot Live balance. Transfer funds from Funding wallet first.`
+            : platErr || 'No Solana wallet found. Fund your Spot Live wallet or install Phantom.'
+        );
         if(!phantom.isConnected) {
           try { await phantom.connect(); } catch(ce:any) { throw new Error('Wallet connection cancelled'); }
         }

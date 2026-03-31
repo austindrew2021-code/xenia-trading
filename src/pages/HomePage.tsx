@@ -191,7 +191,11 @@ export function HomePage({ onNavigate, onShowWallet, onShowAuth }: Props) {
   }, []);
 
   const openPnl = positions.filter(p=>p.status==='open').reduce((s,p)=>s+p.pnl,0);
-  const dispCap = account ? (account.use_real ? account.real_balance : account.mock_balance) : capital;
+  const dispCap = account
+    ? (account.use_real
+        ? (account.real_balance + (account.spot_live_balance ?? 0) + (account.bot_balance ?? 0))
+        : (account.mock_balance + (account.bot_mock_balance ?? 0)))
+    : capital;
   const pts     = account?.monthly_points ? Object.values(account.monthly_points as Record<string,any>).reduce((s:number,m:any)=>s+(m.points||0),0) : 0;
 
   const toggleFav = (id: string) => setFavItems(prev => prev.includes(id) ? prev.filter(f=>f!==id) : [...prev,id]);

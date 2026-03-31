@@ -27,19 +27,22 @@ interface DepositRecord {
 }
 
 export interface TradingAccount {
-  id:            string;
-  user_id:       string;
-  username:      string | null;
-  mock_balance:  number;
-  real_balance:  number;
-  use_real:      boolean;
-  sol_address:   string | null;
-  evm_address:   string | null;
-  positions:     Position[];
-  stats:         AccountStats;
-  monthly_points: Record<string, MonthPoints>;
-  deposits:      DepositRecord[];
-  deposit_wallets: Record<string,string>;
+  id:                 string;
+  user_id:            string;
+  username:           string | null;
+  mock_balance:       number;
+  real_balance:       number;
+  spot_live_balance:  number;
+  bot_balance:        number;
+  bot_mock_balance:   number;
+  use_real:           boolean;
+  sol_address:        string | null;
+  evm_address:        string | null;
+  positions:          Position[];
+  stats:              AccountStats;
+  monthly_points:     Record<string, MonthPoints>;
+  deposits:           DepositRecord[];
+  deposit_wallets:    Record<string,string>;
 }
 
 interface AuthCtx {
@@ -119,10 +122,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (data) {
       setAccount({
         ...data,
-        positions:      data.positions      ?? [],
-        stats:          data.stats          ?? { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
-        monthly_points: data.monthly_points ?? {},
-        deposits:       data.deposits       ?? [],
+        spot_live_balance: data.spot_live_balance ?? 0,
+        bot_balance:       data.bot_balance       ?? 0,
+        bot_mock_balance:  data.bot_mock_balance  ?? 0,
+        positions:         data.positions         ?? [],
+        stats:             data.stats             ?? { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
+        monthly_points:    data.monthly_points    ?? {},
+        deposits:          data.deposits          ?? [],
       } as TradingAccount);
     }
   }, []);
@@ -163,8 +169,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const d = payload.new as any;
         setAccount(prev => prev ? {
           ...prev,
-          mock_balance: d.mock_balance ?? prev.mock_balance,
-          real_balance: d.real_balance ?? prev.real_balance,
+          mock_balance:      d.mock_balance      ?? prev.mock_balance,
+          real_balance:      d.real_balance      ?? prev.real_balance,
+          spot_live_balance: d.spot_live_balance ?? prev.spot_live_balance,
+          bot_balance:       d.bot_balance       ?? prev.bot_balance,
+          bot_mock_balance:  d.bot_mock_balance  ?? prev.bot_mock_balance,
         } : prev);
       })
       .subscribe();
@@ -178,14 +187,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) return error.message;
     if (data.user) {
       await supabase.from('trading_accounts').insert({
-        user_id:        data.user.id,
+        user_id:           data.user.id,
         username,
-        mock_balance:   1000,
-        real_balance:   0,
-        positions:      [],
-        stats:          { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
-        monthly_points: {},
-        deposits:       [],
+        mock_balance:      1000,
+        real_balance:      0,
+        spot_live_balance: 0,
+        bot_balance:       0,
+        bot_mock_balance:  0,
+        positions:         [],
+        stats:             { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
+        monthly_points:    {},
+        deposits:          [],
       });
       await fetchAccount(data.user.id);
     }

@@ -437,7 +437,11 @@ export default function App() {
   };
   const toggleFav = (addr:string) => setFavs(prev=>prev.includes(addr)?prev.filter(a=>a!==addr):[...prev,addr]);
 
-  const dispCap = account?(account.use_real?account.real_balance:account.mock_balance):capital;
+  const dispCap = account
+    ? (account.use_real
+        ? (account.real_balance + (account.spot_live_balance ?? 0) + (account.bot_balance ?? 0))
+        : (account.mock_balance + (account.bot_mock_balance ?? 0)))
+    : capital;
 
   if (authLoading) return <div className="min-h-screen bg-[#05060B] flex items-center justify-center"><div className="w-8 h-8 border-2 border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/></div>;
 
