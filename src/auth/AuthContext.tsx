@@ -278,20 +278,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Sync on-chain SOL balance → Supabase when SOL amount changes
   const lastSyncedSOL = useRef(-1);
-  useEffect(() => {
+  useEffect(() => { void (async () => {
     if (!user || !supabase || liveSOL === 0) return;
     if (Math.abs(liveSOL - lastSyncedSOL.current) < 0.000001) return;
     lastSyncedSOL.current = liveSOL;
     const stored = account?.real_balance ?? 0;
     if (Math.abs(liveSOLUSD - stored) < 0.01) return; // already accurate
-    supabase.from('trading_accounts')
+    const { error } = await supabase.from('trading_accounts')
       .update({ real_balance: liveSOLUSD })
-      .eq('user_id', user.id)
-      .then(({ error }) => {
-        if (!error) setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
-      })
-      .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+      .eq('user_id', user.id);
+    if (!error) setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
+  })(); // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveSOL]);
 
   // ── Connect wallet — immediate write ──────────────────────────────────
