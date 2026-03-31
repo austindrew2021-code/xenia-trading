@@ -1,0 +1,9 @@
+node_modules/
+dist/
+build/
+.vercel/
+*.log
+package-lock.json
+.env*
+.next/
+.git/
