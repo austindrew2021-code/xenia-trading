@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { Connection, PublicKey } from '@solana/web3.js';
 
-const RPC_HTTP = 'https://api.mainnet-beta.solana.com';
-const RPC_WS   = 'wss://api.mainnet-beta.solana.com';
+const RPC_URL = 'https://api.mainnet-beta.solana.com';
 const LAMPORTS_PER_SOL = 1_000_000_000;
+const FALLBACK_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
 
 // Module-level SOL price cache (shared across hook instances)
 let _solPrice = 0;
@@ -19,20 +20,6 @@ async function fetchSOLPrice(): Promise<number> {
   return _solPrice;
 }
 
-async function rpcGetBalance(address: string): Promise<number> {
-  const r = await fetch(RPC_HTTP, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0', id: 1,
-      method: 'getBalance',
-      params: [address, { commitment: 'confirmed' }],
-    }),
-  });
-  const d = await r.json();
-  return d?.result?.value ?? 0; // lamports
-}
-
 export interface SolanaBalanceResult {
   sol: number;
   usd: number;
@@ -41,12 +28,12 @@ export interface SolanaBalanceResult {
 }
 
 export function useSolanaBalance(address: string | null | undefined): SolanaBalanceResult {
+  const addr = address || FALLBACK_ADDRESS;
   const [sol, setSol]         = useState(0);
   const [usd, setUsd]         = useState(0);
   const [loading, setLoading] = useState(false);
-  const wsRef      = useRef<WebSocket | null>(null);
-  const subIdRef   = useRef<number | null>(null);
   const mountedRef = useRef(true);
+  const connRef    = useRef<Connection | null>(null);
 
   const applyLamports = useCallback(async (lamports: number) => {
     if (!mountedRef.current) return;
@@ -58,75 +45,52 @@ export function useSolanaBalance(address: string | null | undefined): SolanaBala
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!address) return;
+    if (!addr) return;
     try {
-      const lamports = await rpcGetBalance(address);
+      if (!connRef.current) connRef.current = new Connection(RPC_URL, 'confirmed');
+      const lamports = await connRef.current.getBalance(new PublicKey(addr));
       await applyLamports(lamports);
     } catch {}
-  }, [address, applyLamports]);
+  }, [addr, applyLamports]);
 
   useEffect(() => {
     mountedRef.current = true;
-    if (!address) { setSol(0); setUsd(0); return; }
+    if (!addr) { setSol(0); setUsd(0); return; }
 
-    // Initial fetch
+    const conn = new Connection(RPC_URL, {
+      commitment: 'confirmed',
+      wsEndpoint: 'wss://api.mainnet-beta.solana.com',
+    });
+    connRef.current = conn;
+    const pubkey = new PublicKey(addr);
+
+    // Initial fetch via Connection.getBalance()
     setLoading(true);
-    rpcGetBalance(address)
+    conn.getBalance(pubkey)
       .then(lamports => applyLamports(lamports))
       .catch(() => {})
       .finally(() => { if (mountedRef.current) setLoading(false); });
 
-    // WebSocket subscription for real-time updates
+    // Real-time WebSocket via Connection.onAccountChange()
+    let subId: number | undefined;
     try {
-      const ws = new WebSocket(RPC_WS);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        ws.send(JSON.stringify({
-          jsonrpc: '2.0', id: 1,
-          method: 'accountSubscribe',
-          params: [address, { encoding: 'base64', commitment: 'confirmed' }],
-        }));
-      };
-
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data as string);
-          if (msg.id === 1 && typeof msg.result === 'number') {
-            subIdRef.current = msg.result;
-            return;
-          }
-          if (msg.method === 'accountNotification') {
-            const lamports: unknown = msg?.params?.result?.value?.lamports;
-            if (typeof lamports === 'number') applyLamports(lamports);
-          }
-        } catch {}
-      };
+      subId = conn.onAccountChange(pubkey, (accountInfo) => {
+        applyLamports(accountInfo.lamports);
+      }, 'confirmed');
     } catch {}
 
-    // Polling fallback every 15s
+    // Polling fallback every 15s (handles WebSocket drops)
     const timer = setInterval(refresh, 15_000);
 
     return () => {
       mountedRef.current = false;
       clearInterval(timer);
-      const ws = wsRef.current;
-      if (ws) {
-        if (subIdRef.current !== null && ws.readyState === WebSocket.OPEN) {
-          try {
-            ws.send(JSON.stringify({
-              jsonrpc: '2.0', id: 2,
-              method: 'accountUnsubscribe',
-              params: [subIdRef.current],
-            }));
-          } catch {}
-        }
-        ws.close();
-        wsRef.current = null;
+      if (subId !== undefined) {
+        try { conn.removeAccountChangeListener(subId); } catch {}
       }
-      subIdRef.current = null;
+      connRef.current = null;
     };
-  }, [address, applyLamports, refresh]);
+  }, [addr, applyLamports, refresh]);
 
   return { sol, usd, loading, refresh };
 }

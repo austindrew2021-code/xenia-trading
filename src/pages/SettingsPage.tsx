@@ -280,7 +280,8 @@ export function SettingsPage({ onNavigate }: Props) {
             <h2 className="text-sm font-bold text-[#F4F6FA] mb-3">Account Balances</h2>
             <div className="space-y-0">
               {[
-                ['Funding / Leverage (Live)', `$${(account?.real_balance ?? 0).toFixed(2)}`],
+                ['On-chain SOL',              liveSOL > 0 ? `${liveSOL.toFixed(4)} SOL ($${liveSOLUSD.toFixed(2)})` : '$0.00'],
+                ['Funding / Leverage (Live)', `$${(liveSOLUSD > 0 ? liveSOLUSD : (account?.real_balance ?? 0)).toFixed(2)}`],
                 ['Spot (Live)',               `$${(account?.spot_live_balance ?? 0).toFixed(2)}`],
                 ['Bots (Live)',               `$${(account?.bot_balance ?? 0).toFixed(2)}`],
                 ['Mock Trading',             `$${(account?.mock_balance ?? 0).toFixed(2)}`],

@@ -48,6 +48,7 @@ export function WalletDepositModal({ onClose }: Props) {
   const [withdrawing, setWithdrawing] = useState(false);
   const [withdrawMsg, setWithdrawMsg] = useState('');
   const [withdrawDone,setWithdrawDone]= useState(false);
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
   const initRef = useRef(false);
   const autoScanRef = useRef(false);
 
@@ -85,12 +86,12 @@ export function WalletDepositModal({ onClose }: Props) {
   useEffect(() => {
     if (!user || initRef.current) return;
     initRef.current = true;
-    // Use platform_wallet_address (canonical) OR fall back to deposit_wallets
-    const platformAddr = (account as any)?.platform_wallet_address;
-    const existing = account?.deposit_wallets as Record<string,string> | undefined;
-    const solAddr = platformAddr || existing?.SOL || existing?.sol || deriveAddresses(user.id).SOL;
+    // Use platform_wallet_address (canonical) OR deposit_wallets.sol (lowercase)
+    const platformAddr = account?.platform_wallet_address;
+    const existing = account?.deposit_wallets;
+    const solAddr = platformAddr || existing?.sol || existing?.SOL || deriveAddresses(user.id).SOL;
     const derived = deriveAddresses(user.id);
-    setAddrs({ SOL: solAddr, ETH: existing?.ETH||existing?.eth||derived.ETH, BTC: existing?.BTC||existing?.btc||derived.BTC, USDC: existing?.USDC||existing?.usdc||derived.USDC });
+    setAddrs({ SOL: solAddr, ETH: existing?.eth||existing?.ETH||derived.ETH, BTC: existing?.btc||existing?.BTC||derived.BTC, USDC: existing?.usdc||existing?.USDC||derived.USDC });
     // If no platform_wallet_address set yet, generate + save
     if (!platformAddr) {
       import('../lib/supabase').then(({ supabase: sb }) => {
@@ -233,6 +234,15 @@ export function WalletDepositModal({ onClose }: Props) {
                   <span className="text-[9px] text-[#2BFFF1]/60 font-semibold">Send only {asset}</span>
                 </div>
 
+                {/* QR Code */}
+                {asset==='SOL'&&addr&&addr!=='—'&&(
+                  <div className="flex justify-center py-2">
+                    <div className="bg-white rounded-xl p-2">
+                      <img src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=solana:${encodeURIComponent(addr)}`} alt="QR Code" width={140} height={140} className="rounded"/>
+                    </div>
+                  </div>
+                )}
+
                 {/* Address display */}
                 <div className="bg-black/40 rounded-xl p-3 border border-white/[0.05]">
                   <p className="font-mono text-[11px] text-[#F4F6FA] break-all leading-relaxed select-all">{addr}</p>
@@ -312,10 +322,32 @@ export function WalletDepositModal({ onClose }: Props) {
                 <div className="rounded-xl border border-[#F59E0B]/20 bg-[#F59E0B]/05 px-3 py-2">
                   <p className="text-[10px] text-[#F59E0B]/80">Network fee will be deducted from the amount. Withdrawals are processed within 24h.</p>
                 </div>
-                <button onClick={submitWithdraw} disabled={withdrawing||!withdrawTo.trim()||!withdrawAmt}
-                  className="w-full py-2.5 rounded-xl text-sm font-bold bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
-                  {withdrawing?'Processing…':`Withdraw ${withdrawAmt?'$'+withdrawAmt:''}`}
-                </button>
+                {/* Confirm withdrawal dialog */}
+                {confirmWithdraw&&(
+                  <div className="rounded-xl border border-[#F59E0B]/30 bg-[#F59E0B]/08 p-3 space-y-2">
+                    <p className="text-xs font-bold text-[#F59E0B]">Confirm Withdrawal</p>
+                    <p className="text-[10px] text-[#A7B0B7]">You are about to withdraw <strong className="text-[#F4F6FA]">${withdrawAmt}</strong> to:</p>
+                    <p className="font-mono text-[10px] text-[#2BFFF1] break-all">{withdrawTo}</p>
+                    <p className="text-[9px] text-[#F59E0B]">This action is irreversible. Real funds will be sent on-chain.</p>
+                    <div className="flex gap-2">
+                      <button onClick={()=>setConfirmWithdraw(false)} className="flex-1 py-2 rounded-xl border border-white/[0.08] text-xs font-bold text-[#A7B0B7] hover:text-[#F4F6FA]">Cancel</button>
+                      <button onClick={()=>{setConfirmWithdraw(false);submitWithdraw();}} disabled={withdrawing}
+                        className="flex-1 py-2 rounded-xl text-xs font-bold bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30 hover:bg-[#F59E0B]/30">
+                        {withdrawing?'Processing…':'Confirm'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {!confirmWithdraw&&(
+                  <button onClick={()=>{
+                    const amt=parseFloat(withdrawAmt);
+                    if(!withdrawTo.trim()||!withdrawAmt||amt<=0){submitWithdraw();return;}
+                    setConfirmWithdraw(true);
+                  }} disabled={withdrawing||!withdrawTo.trim()||!withdrawAmt}
+                    className="w-full py-2.5 rounded-xl text-sm font-bold bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
+                    {withdrawing?'Processing…':`Withdraw ${withdrawAmt?'$'+withdrawAmt:''}`}
+                  </button>
+                )}
               </div>
             )
           ) : null}

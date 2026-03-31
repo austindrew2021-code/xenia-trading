@@ -118,6 +118,7 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
   const [executing,setExec]  = useState(false);
   const [txStatus,setStatus] = useState<{type:'success'|'error';msg:string}|null>(null);
   const [showAnim,setShowAnim] = useState<{side:'buy'|'sell';symbol:string;amount:string}|null>(null);
+  const [confirmTrade, setConfirmTrade] = useState(false);
 
   // Mock uses mock_balance; live spot uses spot_live_balance (funded via Transfer → Spot Live)
   const balance = account ? (isMock ? account.mock_balance : (account.spot_live_balance ?? account.real_balance)) : capital;
@@ -151,7 +152,17 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
     setExec(false);
   };
 
+  const handleTradeClick = () => {
+    if(orderType==='limit') { executeTrade(); return; }
+    if(!isMock && user && token && amtN > 0 && amtN <= balance) {
+      setConfirmTrade(true);
+      return;
+    }
+    executeTrade();
+  };
+
   const executeTrade = async () => {
+    setConfirmTrade(false);
     if(orderType==='limit') { placeLimitOrder(); return; }
     if(!supabase) { setStatus({type:'error',msg:'Not connected to server'}); return; }
     if(!user||!token||amtN<=0) return;
@@ -401,13 +412,36 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
         </div>
       )}
 
-      <button onClick={executeTrade} disabled={executing||!user||amtN<=0||amtN>balance||(orderType==='limit'&&(!limitPrice||parseFloat(limitPrice)<=0))}
-        className={`w-full py-3 rounded-xl text-sm font-black transition-all disabled:opacity-40 ${side==='buy'?'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30':'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'}`}>
-        {executing?<span className="flex items-center justify-center gap-1.5"><div className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin"/>{orderType==='limit'?'Placing…':isMock?'Simulating…':'Sending…'}</span>
-          :!user?'Sign in to trade'
-          :orderType==='limit'?`Place Limit ${side==='buy'?'Buy':'Sell'}`
-          :`${side==='buy'?'Buy':'Sell'} ${token.symbol} ${isMock?'· Mock':'· Live'}`}
-      </button>
+      {/* Live trade confirmation dialog */}
+      {confirmTrade&&!isMock&&token&&(
+        <div className="rounded-xl border border-[#F59E0B]/30 bg-[#F59E0B]/08 p-3 space-y-2">
+          <p className="text-xs font-bold text-[#F59E0B]">Confirm Live Trade</p>
+          <div className="text-[10px] text-[#A7B0B7] space-y-1">
+            <p><strong className="text-[#F4F6FA]">{side==='buy'?'Buy':'Sell'} {tokOut.toFixed(4)} {token.symbol}</strong> for <strong className="text-[#F4F6FA]">${amtN.toFixed(2)}</strong></p>
+            <p>Price: {fmtP(livePrice)} · Fee: ${feeUsd.toFixed(4)}</p>
+          </div>
+          <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-2 py-1.5">
+            <p className="text-[9px] text-red-400 font-semibold">This will execute a real trade with real funds. Market orders execute immediately at current price. You may lose money.</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={()=>setConfirmTrade(false)} className="flex-1 py-2 rounded-xl border border-white/[0.08] text-xs font-bold text-[#A7B0B7] hover:text-[#F4F6FA]">Cancel</button>
+            <button onClick={executeTrade}
+              className={`flex-1 py-2 rounded-xl text-xs font-bold border ${side==='buy'?'bg-green-500/20 text-green-400 border-green-500/30':'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+              Confirm {side==='buy'?'Buy':'Sell'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!confirmTrade&&(
+        <button onClick={handleTradeClick} disabled={executing||!user||amtN<=0||amtN>balance||(orderType==='limit'&&(!limitPrice||parseFloat(limitPrice)<=0))}
+          className={`w-full py-3 rounded-xl text-sm font-black transition-all disabled:opacity-40 ${side==='buy'?'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30':'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'}`}>
+          {executing?<span className="flex items-center justify-center gap-1.5"><div className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin"/>{orderType==='limit'?'Placing…':isMock?'Simulating…':'Sending…'}</span>
+            :!user?'Sign in to trade'
+            :orderType==='limit'?`Place Limit ${side==='buy'?'Buy':'Sell'}`
+            :`${side==='buy'?'Buy':'Sell'} ${token.symbol} ${isMock?'· Mock':'· Live'}`}
+        </button>
+      )}
     </div>
     </>
   );

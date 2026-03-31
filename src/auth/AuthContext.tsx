@@ -37,13 +37,14 @@ export interface TradingAccount {
   bot_balance:        number;
   bot_mock_balance:   number;
   use_real:           boolean;
-  sol_address:        string | null;
-  evm_address:        string | null;
-  positions:          Position[];
-  stats:              AccountStats;
-  monthly_points:     Record<string, MonthPoints>;
-  deposits:           DepositRecord[];
-  deposit_wallets:    Record<string,string>;
+  sol_address:              string | null;
+  evm_address:              string | null;
+  platform_wallet_address:  string | null;
+  positions:                Position[];
+  stats:                    AccountStats;
+  monthly_points:           Record<string, MonthPoints>;
+  deposits:                 DepositRecord[];
+  deposit_wallets:          Record<string,string>;
 }
 
 interface AuthCtx {
@@ -268,12 +269,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queue({ monthly_points: newMonthly, stats: newStats });
   }, [account, queue]);
 
-  // ── Live on-chain SOL balance ─────────────────────────────────────────
-  const solDepositAddress: string | null =
-    (account as any)?.platform_wallet_address ||
-    (account?.deposit_wallets as any)?.SOL ||
-    (account?.deposit_wallets as any)?.sol ||
-    null;
+  // ── Live on-chain SOL balance (hardcoded fallback = platform address) ──
+  const PLATFORM_SOL_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
+  const solDepositAddress: string =
+    account?.platform_wallet_address ||
+    account?.deposit_wallets?.sol ||
+    PLATFORM_SOL_ADDRESS;
   const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(solDepositAddress);
 
   // Sync on-chain SOL balance → Supabase when SOL amount changes
