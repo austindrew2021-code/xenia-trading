@@ -115,14 +115,14 @@ function getPrecision(p: number): number { if(p>=1) return 4; if(p>=0.001) retur
 
 function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: { livePrice:number; asset:string; chartTP?:number|null; chartSL?:number|null; onClearChartTPSL?:()=>void }) {
   const { capital, openPosition, addLog } = useTradingStore();
-  const { account, saveAccount, recordTrade } = useAuth();
+  const { account, saveAccount, recordTrade, liveSOLUSD } = useAuth();
   const [side,setSide] = useState<Side>('LONG');
   const [size,setSize] = useState('50');
   const [lev,setLev]   = useState('10');
   const [tp,setTp]     = useState('');
   const [sl,setSl]     = useState('');
 
-
+  const [confirmLive, setConfirmLive] = useState(false);
   const [warnAck, setWarnAck] = useState(false);
 
   // Auto-fill TP/SL from chart right-click
@@ -136,26 +136,34 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: { l
   const sizeN  = parseFloat(size)||0;
   const levN   = Math.min(parseInt(lev)||1, 300);
   const notional = sizeN * levN;
-  const cap    = account ? (account.use_real ? account.real_balance : account.mock_balance) : capital;
+  const cap    = account ? (account.use_real ? (liveSOLUSD > 0 ? liveSOLUSD : account.real_balance) : account.mock_balance) : capital;
   const liqPct = (1/levN) * 0.9;
   const isHighLev = levN > 50;
   const isExtrLev = levN > 100;
   const needsWarn = isHighLev && !warnAck;
 
-  const submit = async () => {
-    if (sizeN <= 0 || sizeN > cap) return;
-    if (needsWarn) { setWarnAck(true); return; }
+  const executeTrade = async () => {
     const pos = openPosition(asset, side, livePrice, sizeN, levN, 'manual', tp ? parseFloat(tp) : undefined, sl ? parseFloat(sl) : undefined);
     if (pos) {
-      addLog(`📌 Manual ${side} ${asset} $${sizeN} ×${levN} @ $${livePrice.toFixed(4)}`);
+      const modeLabel = account?.use_real ? '🔴 LIVE' : '📌';
+      addLog(`${modeLabel} Manual ${side} ${asset} $${sizeN} ×${levN} @ $${livePrice.toFixed(4)}`);
       if (account) {
         const field = account.use_real ? 'real_balance' : 'mock_balance';
-        const bal = account.use_real ? account.real_balance : account.mock_balance;
+        const bal = account.use_real ? (liveSOLUSD > 0 ? liveSOLUSD : account.real_balance) : account.mock_balance;
         saveAccount({ [field]: Math.max(0, bal - sizeN) } as any);
         recordTrade(notional, 0, false);
       }
       setWarnAck(false);
+      setConfirmLive(false);
     }
+  };
+
+  const submit = async () => {
+    if (sizeN <= 0 || sizeN > cap) return;
+    if (needsWarn) { setWarnAck(true); return; }
+    // Live mode: require explicit confirmation before executing real trade
+    if (account?.use_real && !confirmLive) { setConfirmLive(true); return; }
+    await executeTrade();
   };
 
   const levBtnColor = (p: number) => {
@@ -237,13 +245,28 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: { l
         ))}
       </div>
 
-      <button onClick={submit} disabled={sizeN <= 0 || sizeN > cap}
+      {/* Live trade confirmation dialog */}
+      {confirmLive && account?.use_real && (
+        <div className="rounded-xl border border-[#F59E0B]/30 bg-[#F59E0B]/08 p-3 mb-3 space-y-2">
+          <p className="text-xs font-bold text-[#F59E0B]">Confirm LIVE Trade</p>
+          <p className="text-[10px] text-[#A7B0B7]">
+            {side} {asset} · <strong className="text-[#F4F6FA]">${sizeN}</strong> × {levN}× = ${notional.toFixed(0)} notional
+          </p>
+          <p className="text-[9px] text-[#F59E0B]">This will use REAL funds. This action cannot be undone.</p>
+          <div className="flex gap-2">
+            <button onClick={() => setConfirmLive(false)} className="flex-1 py-2 rounded-xl border border-white/[0.08] text-xs font-bold text-[#A7B0B7] hover:text-[#F4F6FA]">Cancel</button>
+            <button onClick={executeTrade} className="flex-1 py-2 rounded-xl text-xs font-bold bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30 hover:bg-[#F59E0B]/30">Execute Live</button>
+          </div>
+        </div>
+      )}
+
+      <button onClick={submit} disabled={sizeN <= 0 || sizeN > cap || confirmLive}
         className={`w-full py-3 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
           needsWarn
             ? isExtrLev ? 'bg-red-500/30 text-red-300 border border-red-500/50 animate-pulse' : 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 animate-pulse'
             : side==='LONG' ? 'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
         }`}>
-        {needsWarn ? `⚠️ Confirm ${levN}× — click again to open` : side==='LONG' ? '▲ Open Long' : '▼ Open Short'}
+        {needsWarn ? `⚠️ Confirm ${levN}× — click again to open` : account?.use_real ? `🔴 ${side==='LONG' ? '▲ Open Long' : '▼ Open Short'} (LIVE)` : side==='LONG' ? '▲ Open Long' : '▼ Open Short'}
       </button>
     </div>
   );
@@ -427,7 +450,7 @@ export default function App() {
 
   useBotEngine({prices,livePrice,asset:asset.label,candles});
   useEffect(()=>{setFlash(true);setTimeout(()=>setFlash(false),300);},[livePrice]);
-  useEffect(()=>{if(account)setCapital(account.use_real?account.real_balance:account.mock_balance);},[account,setCapital]);
+  useEffect(()=>{if(account)setCapital(account.use_real?(liveSOLUSD>0?liveSOLUSD:account.real_balance):account.mock_balance);},[account?.use_real,account?.real_balance,account?.mock_balance,liveSOLUSD,setCapital]);
 
   // Auto-scan deposits on login to sync real_balance from on-chain
   const depositScannedRef = useRef(false);

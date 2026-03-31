@@ -124,11 +124,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq('user_id', uid)
       .single();
     if (data) {
+      // Normalize DB column variants: platform_sol_address → platform_wallet_address
+      const platformAddr = data.platform_wallet_address ?? data.platform_sol_address ?? null;
+      const dw = data.deposit_wallets ?? {};
+      // Normalize deposit_wallets keys to lowercase
+      const normalizedDW: Record<string,string> = {};
+      for (const [k, v] of Object.entries(dw)) normalizedDW[k.toLowerCase()] = v as string;
+
       setAccount({
         ...data,
+        platform_wallet_address: platformAddr,
+        deposit_wallets:   normalizedDW,
         spot_live_balance: data.spot_live_balance ?? 0,
         bot_balance:       data.bot_balance       ?? 0,
         bot_mock_balance:  data.bot_mock_balance  ?? 0,
+        use_real:          data.use_real           ?? false,
         positions:         data.positions         ?? [],
         stats:             data.stats             ?? { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
         monthly_points:    data.monthly_points    ?? {},
@@ -178,6 +188,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           spot_live_balance: d.spot_live_balance ?? prev.spot_live_balance,
           bot_balance:       d.bot_balance       ?? prev.bot_balance,
           bot_mock_balance:  d.bot_mock_balance  ?? prev.bot_mock_balance,
+          use_real:          d.use_real           ?? prev.use_real,
+          platform_wallet_address: d.platform_wallet_address ?? d.platform_sol_address ?? prev.platform_wallet_address,
+          deposit_wallets:   d.deposit_wallets   ?? prev.deposit_wallets,
         } : prev);
       })
       .subscribe();
@@ -198,6 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         spot_live_balance: 0,
         bot_balance:       0,
         bot_mock_balance:  0,
+        use_real:          false,
         positions:         [],
         stats:             { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
         monthly_points:    {},
@@ -274,14 +288,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const solDepositAddress: string =
     account?.platform_wallet_address ||
     account?.deposit_wallets?.sol ||
+    account?.deposit_wallets?.SOL ||
     PLATFORM_SOL_ADDRESS;
   const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(solDepositAddress);
 
   // Sync on-chain SOL balance → Supabase when SOL amount changes
   const lastSyncedSOL = useRef(-1);
+  const initialSyncDone = useRef(false);
   useEffect(() => { void (async () => {
-    if (!user || !supabase || liveSOL === 0) return;
-    if (Math.abs(liveSOL - lastSyncedSOL.current) < 0.000001) return;
+    if (!user || !supabase) return;
+    // Skip only if we've synced before AND balance hasn't changed
+    if (initialSyncDone.current && Math.abs(liveSOL - lastSyncedSOL.current) < 0.000001) return;
+    initialSyncDone.current = true;
     lastSyncedSOL.current = liveSOL;
     const stored = account?.real_balance ?? 0;
     if (Math.abs(liveSOLUSD - stored) < 0.01) return; // already accurate

@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Connection, PublicKey } from '@solana/web3.js';
 
-const RPC_URL = 'https://api.mainnet-beta.solana.com';
+const RPC_ENDPOINTS = [
+  'https://api.mainnet-beta.solana.com',
+  'https://solana-mainnet.g.alchemy.com/v2/demo',
+  'https://rpc.ankr.com/solana',
+];
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const FALLBACK_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
 
@@ -44,32 +48,49 @@ export function useSolanaBalance(address: string | null | undefined): SolanaBala
     setUsd(solAmt * price);
   }, []);
 
+  const rpcIdx = useRef(0);
   const refresh = useCallback(async () => {
     if (!addr) return;
-    try {
-      if (!connRef.current) connRef.current = new Connection(RPC_URL, 'confirmed');
-      const lamports = await connRef.current.getBalance(new PublicKey(addr));
-      await applyLamports(lamports);
-    } catch {}
+    // Try each RPC endpoint on failure
+    for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
+      try {
+        const idx = (rpcIdx.current + i) % RPC_ENDPOINTS.length;
+        const conn = new Connection(RPC_ENDPOINTS[idx], 'confirmed');
+        const lamports = await conn.getBalance(new PublicKey(addr));
+        connRef.current = conn;
+        rpcIdx.current = idx;
+        await applyLamports(lamports);
+        return;
+      } catch {}
+    }
   }, [addr, applyLamports]);
 
   useEffect(() => {
     mountedRef.current = true;
     if (!addr) { setSol(0); setUsd(0); return; }
 
-    const conn = new Connection(RPC_URL, {
+    const primaryRPC = RPC_ENDPOINTS[rpcIdx.current];
+    const conn = new Connection(primaryRPC, {
       commitment: 'confirmed',
-      wsEndpoint: 'wss://api.mainnet-beta.solana.com',
+      wsEndpoint: primaryRPC.replace('https://', 'wss://').replace('http://', 'ws://'),
     });
     connRef.current = conn;
     const pubkey = new PublicKey(addr);
 
-    // Initial fetch via Connection.getBalance()
+    // Initial fetch — try all RPCs on failure
     setLoading(true);
-    conn.getBalance(pubkey)
-      .then(lamports => applyLamports(lamports))
-      .catch(() => {})
-      .finally(() => { if (mountedRef.current) setLoading(false); });
+    (async () => {
+      for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
+        try {
+          const idx = (rpcIdx.current + i) % RPC_ENDPOINTS.length;
+          const c = i === 0 ? conn : new Connection(RPC_ENDPOINTS[idx], 'confirmed');
+          const lamports = await c.getBalance(pubkey);
+          if (i > 0) { connRef.current = c; rpcIdx.current = idx; }
+          await applyLamports(lamports);
+          return;
+        } catch {}
+      }
+    })().finally(() => { if (mountedRef.current) setLoading(false); });
 
     // Real-time WebSocket via Connection.onAccountChange()
     let subId: number | undefined;
@@ -79,8 +100,8 @@ export function useSolanaBalance(address: string | null | undefined): SolanaBala
       }, 'confirmed');
     } catch {}
 
-    // Polling fallback every 15s (handles WebSocket drops)
-    const timer = setInterval(refresh, 15_000);
+    // Polling fallback every 10s (handles WebSocket drops + rate limits)
+    const timer = setInterval(refresh, 10_000);
 
     return () => {
       mountedRef.current = false;
