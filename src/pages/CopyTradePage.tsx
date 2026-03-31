@@ -169,7 +169,7 @@ export function CopyTradePage() {
         win_rate: trader.win_rate, total_pnl: trader.total_pnl,
         monthly_pnl: trader.monthly_pnl, follower_count: trader.follower_count,
         copy_fee_pct: trader.copy_fee_pct, is_active: true, verified: trader.verified,
-      }, { onConflict: 'id' }).catch(() => {});
+      }, { onConflict: 'id' });
     }
 
     const { error } = await supabase.from('copy_subscriptions').upsert({
