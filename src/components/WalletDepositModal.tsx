@@ -33,7 +33,7 @@ function generateMnemonic(userId: string): string {
 interface Props { onClose: () => void; }
 
 export function WalletDepositModal({ onClose }: Props) {
-  const { user, account, saveAccount } = useAuth();
+  const { user, account, saveAccount, liveSOL, liveSOLUSD } = useAuth();
   const [asset,       setAsset]       = useState<DepositAsset>('SOL');
   const [addrs,       setAddrs]       = useState<Record<string,string>>({});
   const [loading,     setLoading]     = useState(true);
@@ -180,7 +180,7 @@ export function WalletDepositModal({ onClose }: Props) {
             <div className="w-8 h-8 rounded-xl flex items-center justify-center font-black text-sm" style={{background:'linear-gradient(135deg,#2BFFF1,#00c4ff)',color:'#05060B'}}>X</div>
             <div>
               <p className="text-sm font-black text-[#F4F6FA]">Xenia Wallet</p>
-              <p className="text-[10px] text-[#4B5563]">${(account?.real_balance??0).toFixed(2)} live · ${(account?.mock_balance??0).toFixed(2)} mock</p>
+              <p className="text-[10px] text-[#4B5563]">{liveSOL > 0 ? `${liveSOL.toFixed(4)} SOL ($${liveSOLUSD.toFixed(2)}) live` : `$${(account?.real_balance??0).toFixed(2)} live`} · ${(account?.mock_balance??0).toFixed(2)} mock</p>
             </div>
           </div>
           <button onClick={onClose} className="text-[#4B5563] hover:text-[#A7B0B7] p-1">
@@ -287,7 +287,7 @@ export function WalletDepositModal({ onClose }: Props) {
               <div className="space-y-3">
                 <div className="rounded-xl bg-[#05060B] border border-white/[0.06] p-3">
                   <p className="text-[9px] text-[#4B5563] mb-1">Available to withdraw</p>
-                  <p className="text-lg font-black text-[#F4F6FA]">${(account?.real_balance??0).toFixed(2)}</p>
+                  <p className="text-lg font-black text-[#F4F6FA]">${(liveSOLUSD > 0 ? liveSOLUSD : (account?.real_balance??0)).toFixed(2)}</p>
                 </div>
                 <div className="grid grid-cols-4 gap-1.5">
                   {ASSETS.map(a=>(

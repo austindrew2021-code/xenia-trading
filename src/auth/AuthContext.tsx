@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, Re
 import { User, Session } from '@supabase/supabase-js';
 import { supabase, currentMonth, POINTS_PER_USD } from '../lib/supabase';
 import { Position } from '../types';
+import { useSolanaBalance } from '../hooks/useSolanaBalance';
 
 // ── What we store in Supabase (one row per user) ──────────────────────────
 interface AccountStats {
@@ -50,6 +51,8 @@ interface AuthCtx {
   session: Session | null;
   account: TradingAccount | null;
   loading: boolean;
+  liveSOL:    number;
+  liveSOLUSD: number;
   signUp:       (email: string, password: string, username: string) => Promise<string | null>;
   signIn:       (email: string, password: string) => Promise<string | null>;
   signOut:      () => Promise<void>;
@@ -265,6 +268,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queue({ monthly_points: newMonthly, stats: newStats });
   }, [account, queue]);
 
+  // ── Live on-chain SOL balance ─────────────────────────────────────────
+  const solDepositAddress: string | null =
+    (account as any)?.platform_wallet_address ||
+    (account?.deposit_wallets as any)?.SOL ||
+    (account?.deposit_wallets as any)?.sol ||
+    null;
+  const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(solDepositAddress);
+
+  // Sync on-chain SOL balance → Supabase when SOL amount changes
+  const lastSyncedSOL = useRef(-1);
+  useEffect(() => {
+    if (!user || !supabase || liveSOL === 0) return;
+    if (Math.abs(liveSOL - lastSyncedSOL.current) < 0.000001) return;
+    lastSyncedSOL.current = liveSOL;
+    const stored = account?.real_balance ?? 0;
+    if (Math.abs(liveSOLUSD - stored) < 0.01) return; // already accurate
+    supabase.from('trading_accounts')
+      .update({ real_balance: liveSOLUSD })
+      .eq('user_id', user.id)
+      .then(({ error }) => {
+        if (!error) setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSOL]);
+
   // ── Connect wallet — immediate write ──────────────────────────────────
   const connectWallet = useCallback((type: 'sol' | 'evm', address: string) => {
     const patch = type === 'sol'
@@ -288,6 +317,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{
       user, session, account, loading,
+      liveSOL, liveSOLUSD,
       signUp, signIn, signOut, saveAccount,
       syncPositions, recordTrade, connectWallet, addDeposit,
     }}>

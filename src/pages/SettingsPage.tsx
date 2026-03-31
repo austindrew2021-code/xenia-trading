@@ -20,7 +20,7 @@ const Icon = {
 interface Props { onNavigate?: (page: any, sub?: any) => void; }
 
 export function SettingsPage({ onNavigate }: Props) {
-  const { user, account, saveAccount, signOut } = useAuth();
+  const { user, account, saveAccount, signOut, liveSOL, liveSOLUSD } = useAuth();
   const [tab, setTab]               = useState<SettingsTab>('account');
   const [username, setUsername]     = useState(account?.username ?? '');
   const [saving, setSaving]         = useState(false);
@@ -173,6 +173,11 @@ export function SettingsPage({ onNavigate }: Props) {
           <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
             <h2 className="text-sm font-bold text-[#F4F6FA] mb-3">Account Info</h2>
             <div className="space-y-0">
+              <Row label="Live Balance">
+                <span className="text-sm font-mono font-bold text-[#2BFFF1]">
+                  {liveSOL > 0 ? `${liveSOL.toFixed(4)} SOL ($${liveSOLUSD.toFixed(2)})` : `$${(account?.real_balance ?? 0).toFixed(2)}`}
+                </span>
+              </Row>
               <Row label="Mock Balance">
                 <span className="text-sm font-mono font-bold text-[#F4F6FA]">${(account?.mock_balance ?? 0).toFixed(2)}</span>
               </Row>
@@ -214,7 +219,7 @@ export function SettingsPage({ onNavigate }: Props) {
                 </span>
                 <Toggle on={account?.use_real ?? false} onChange={v => { saveAccount({ use_real: v } as any); showMsg(v ? 'Switched to LIVE mode' : 'Switched to MOCK mode'); }}/>
               </Row>
-              {account?.use_real && (account?.real_balance ?? 0) === 0 && (
+              {account?.use_real && (account?.real_balance ?? 0) === 0 && liveSOLUSD === 0 && (
                 <div className="rounded-xl bg-[#F59E0B]/08 border border-[#F59E0B]/20 px-3 py-2">
                   <p className="text-[10px] text-[#F59E0B]">Live mode active but real balance is $0. Use Wallet → Deposit to fund your account.</p>
                 </div>

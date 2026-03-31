@@ -423,7 +423,7 @@ export default function App() {
 
   const {candles,livePrice,loading,change24h,prices,asset} = usePriceData(assetId,interval,customAddr,customPair);
   const {capital,setCapital,resetCapital,positions} = useTradingStore();
-  const {user,account,signOut,loading:authLoading} = useAuth();
+  const {user,account,signOut,loading:authLoading,liveSOLUSD} = useAuth();
 
   useBotEngine({prices,livePrice,asset:asset.label,candles});
   useEffect(()=>{setFlash(true);setTimeout(()=>setFlash(false),300);},[livePrice]);
@@ -455,7 +455,7 @@ export default function App() {
 
   const dispCap = account
     ? (account.use_real
-        ? (account.real_balance + (account.spot_live_balance ?? 0) + (account.bot_balance ?? 0))
+        ? ((liveSOLUSD > 0 ? liveSOLUSD : account.real_balance) + (account.spot_live_balance ?? 0) + (account.bot_balance ?? 0))
         : (account.mock_balance + (account.bot_mock_balance ?? 0)))
     : capital;
 
