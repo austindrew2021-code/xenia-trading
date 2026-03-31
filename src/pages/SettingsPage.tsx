@@ -212,8 +212,13 @@ export function SettingsPage({ onNavigate }: Props) {
                 <span className={`text-xs font-bold px-2.5 py-1 rounded-xl border ${account?.use_real ? 'text-[#2BFFF1] border-[#2BFFF1]/30 bg-[#2BFFF1]/10' : 'text-[#6B7280] border-white/[0.08]'}`}>
                   {account?.use_real ? 'LIVE' : 'MOCK'}
                 </span>
-                <Toggle on={account?.use_real ?? false} onChange={v => saveAccount({ use_real: v } as any)}/>
+                <Toggle on={account?.use_real ?? false} onChange={v => { saveAccount({ use_real: v } as any); showMsg(v ? 'Switched to LIVE mode' : 'Switched to MOCK mode'); }}/>
               </Row>
+              {account?.use_real && (account?.real_balance ?? 0) === 0 && (
+                <div className="rounded-xl bg-[#F59E0B]/08 border border-[#F59E0B]/20 px-3 py-2">
+                  <p className="text-[10px] text-[#F59E0B]">Live mode active but real balance is $0. Use Wallet → Deposit to fund your account.</p>
+                </div>
+              )}
               <Row label="Confirm high leverage orders">
               <Toggle on={notifPrefs.confirmLev ?? true} onChange={v => setNotif('confirmLev', v)}/>
             </Row>

@@ -53,6 +53,38 @@ export function WalletDepositModal({ onClose }: Props) {
   const [withdrawMsg, setWithdrawMsg] = useState('');
   const [withdrawDone,setWithdrawDone]= useState(false);
   const initRef = useRef(false);
+  const autoScanRef = useRef(false);
+
+  // Auto-poll SOL deposits every 15s while deposit tab + SOL is active
+  useEffect(() => {
+    if (!user || loading || tab !== 'deposit' || asset !== 'SOL' || depDone) return;
+    if (!depMsg) setDepMsg('Watching for incoming deposits… (auto-checks every 15s)');
+    const poll = async () => {
+      if (autoScanRef.current) return;
+      autoScanRef.current = true;
+      try {
+        const { supabase: sb } = await import('../lib/supabase');
+        const { data: { session } } = await sb!.auth.getSession();
+        if (!session?.access_token) { autoScanRef.current = false; return; }
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/deposit-monitor`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        });
+        const d = await r.json();
+        if (d.credited?.length > 0) {
+          const total = d.credited.reduce((s: number, c: any) => s + c.usdAmount, 0);
+          setDepMsg(`✅ Detected and credited $${total.toFixed(2)} to your live balance!`);
+          if (sb) {
+            const { data: acctData } = await sb.from('trading_accounts').select('real_balance').eq('user_id', user.id).single();
+            if (acctData) saveAccount({ real_balance: acctData.real_balance } as any).catch(() => {});
+          }
+        }
+      } catch {}
+      autoScanRef.current = false;
+    };
+    const id = setInterval(poll, 15000);
+    return () => clearInterval(id);
+  }, [user?.id, loading, tab, asset, depDone]);
 
   useEffect(() => {
     if (!user || initRef.current) return;
@@ -218,7 +250,7 @@ export function WalletDepositModal({ onClose }: Props) {
                       </button>
                     )}
                   </div>
-                  {depMsg&&<p className={`text-[10px] font-semibold ${depMsg.startsWith('Found')?'text-green-400':'text-[#F59E0B]'}`}>{depMsg}</p>}
+                  {depMsg&&<p className={`text-[10px] font-semibold ${depMsg.startsWith('✅')?'text-green-400':'text-[#F59E0B]'}`}>{depMsg}</p>}
                 </div>
 
                 {/* Confirm deposit */}

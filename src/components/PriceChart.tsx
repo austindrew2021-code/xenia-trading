@@ -908,12 +908,24 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           <span className="hidden sm:inline">OB/Liq</span>
         </button>
 
+        {/* Quick indicator chips */}
+        {(['sma','ema','bbands','rsi','macd'] as const).map((id, i) => {
+          const labels = ['SMA','EMA','BB','RSI','MACD'];
+          const on = activeIndicators.includes(id);
+          return (
+            <button key={id} onClick={() => setActiveIndicators(prev => on ? prev.filter(x=>x!==id) : [...prev, id])}
+              className={`hidden sm:block px-1.5 py-1 rounded text-[10px] font-bold border transition-all ${on ? 'bg-[#2BFFF1]/15 text-[#2BFFF1] border-[#2BFFF1]/30' : 'border-white/[0.06] text-[#374151] hover:text-[#6B7280] hover:border-white/[0.12]'}`}>
+              {labels[i]}
+            </button>
+          );
+        })}
+
         {/* Indicators menu button */}
         <button onClick={()=>setShowIndicators(true)}
           className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-semibold border border-white/[0.06] bg-white/[0.03] text-[#4B5563] hover:text-[#2BFFF1] hover:border-[#2BFFF1]/30 transition-all">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          <span className="hidden sm:inline">Indicators</span>
-          {activeIndicators.length>0&&<span className="ml-0.5 text-[8px] bg-[#2BFFF1]/20 text-[#2BFFF1] rounded px-1">{activeIndicators.length}</span>}
+          <span className="hidden sm:inline">More</span>
+          {activeIndicators.filter(x=>!['sma','ema','bbands','rsi','macd'].includes(x)).length>0&&<span className="ml-0.5 text-[8px] bg-[#2BFFF1]/20 text-[#2BFFF1] rounded px-1">{activeIndicators.filter(x=>!['sma','ema','bbands','rsi','macd'].includes(x)).length}</span>}
         </button>
 
         {/* TP/SL toggle */}

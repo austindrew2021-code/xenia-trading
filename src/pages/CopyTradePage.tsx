@@ -112,6 +112,10 @@ export function CopyTradePage() {
   const [following,setFollowing]= useState<Set<string>>(new Set());
   const [confirm,  setConfirm]  = useState<{trader:Trader;amt:number}|null>(null);
   const [confirming,setConfirming]=useState(false);
+  const [followError, setFollowError] = useState('');
+
+  // Sync mock/live with account setting
+  useEffect(() => { if (account) setIsMock(!account.use_real); }, [account?.use_real]);
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -146,13 +150,36 @@ export function CopyTradePage() {
   const confirmFollow = async () => {
     if (!supabase || !user || !confirm) return;
     setConfirming(true);
+    setFollowError('');
     const { trader, amt } = confirm;
+
+    // Balance check
+    const balance = isMock ? (account?.mock_balance ?? 0) : (account?.real_balance ?? 0);
+    if (amt > balance) {
+      setFollowError(`Insufficient ${isMock ? 'mock' : 'live'} balance ($${balance.toFixed(2)} available)`);
+      setConfirming(false);
+      return;
+    }
+
+    // Ensure mock traders (user_id='') exist in DB before subscribing
+    if (!trader.user_id) {
+      await supabase.from('copy_traders').upsert({
+        id: trader.id, user_id: user.id,
+        display_name: trader.display_name, bio: trader.bio,
+        win_rate: trader.win_rate, total_pnl: trader.total_pnl,
+        monthly_pnl: trader.monthly_pnl, follower_count: trader.follower_count,
+        copy_fee_pct: trader.copy_fee_pct, is_active: true, verified: trader.verified,
+      }, { onConflict: 'id' }).catch(() => {});
+    }
+
     const { error } = await supabase.from('copy_subscriptions').upsert({
       follower_id: user.id, trader_id: trader.id,
       copy_amount_usd: amt, is_active: true, is_mock: isMock,
     });
     if (!error) {
       setFollowing(prev => new Set([...prev, trader.id]));
+    } else {
+      setFollowError(error.message);
     }
     setConfirming(false);
     setConfirm(null);
@@ -182,10 +209,17 @@ export function CopyTradePage() {
               <div className="flex justify-between"><span className="text-[#6B7280]">Mode</span><span className={`font-bold ${isMock?'text-[#6B7280]':'text-[#2BFFF1]'}`}>{isMock?'Mock (practice)':'LIVE'}</span></div>
               <div className="flex justify-between"><span className="text-[#6B7280]">Trader fee</span><span className="text-[#F59E0B]">{(confirm.trader.copy_fee_pct*100).toFixed(0)}% of profits</span></div>
               <div className="flex justify-between"><span className="text-[#6B7280]">Platform fee</span><span className="text-[#F59E0B]">10% of profits</span></div>
+              <div className="flex justify-between border-t border-white/[0.06] pt-2 mt-1">
+                <span className="text-[#6B7280]">Your {isMock?'mock':'live'} balance</span>
+                <span className={`font-bold ${(isMock?account?.mock_balance:account?.real_balance??0)??0 >= confirm.amt?'text-green-400':'text-red-400'}`}>
+                  ${((isMock?account?.mock_balance:account?.real_balance)??0).toFixed(2)}
+                </span>
+              </div>
             </div>
+            {followError && <p className="text-[10px] text-red-400 font-semibold">{followError}</p>}
             <p className="text-[10px] text-[#4B5563]">When this trader opens a position, Xenia will mirror it proportionally with your copy amount.</p>
             <div className="flex gap-2">
-              <button onClick={() => setConfirm(null)} className="flex-1 py-2.5 rounded-xl border border-white/[0.08] text-xs font-bold text-[#4B5563] hover:text-[#A7B0B7] transition-all">Cancel</button>
+              <button onClick={() => { setConfirm(null); setFollowError(''); }} className="flex-1 py-2.5 rounded-xl border border-white/[0.08] text-xs font-bold text-[#4B5563] hover:text-[#A7B0B7] transition-all">Cancel</button>
               <button onClick={confirmFollow} disabled={confirming}
                 className="flex-1 py-2.5 rounded-xl bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 text-xs font-black hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-50">
                 {confirming ? 'Following…' : 'Confirm Follow'}

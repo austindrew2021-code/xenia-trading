@@ -386,7 +386,7 @@ function MobileTrade({ assetId,livePrice,change24h,candles,prices,assetLabel,onC
       <div className="flex-1 overflow-hidden">
         {tab==='chart'&&(
           <div className="h-full flex flex-col">
-            <div className="flex-1 min-h-0 p-2"><PriceChart candles={candles} livePrice={livePrice} positions={positions}/></div>
+            <div className="flex-1 min-h-0 p-2"><PriceChart candles={candles} livePrice={livePrice} positions={positions} onPlaceOrder={(_side,tp,sl)=>{if(tp!=null&&onSetTP)onSetTP(tp);if(sl!=null&&onSetSL)onSetSL(sl);setTab('trade');}}/></div>
             <div className="p-3 border-t border-white/[0.06] flex-shrink-0"><StatsBar/></div>
             <div className="flex-1 overflow-y-auto p-3 min-h-0"><PositionsTable livePrice={livePrice}/></div>
           </div>
@@ -428,6 +428,22 @@ export default function App() {
   useBotEngine({prices,livePrice,asset:asset.label,candles});
   useEffect(()=>{setFlash(true);setTimeout(()=>setFlash(false),300);},[livePrice]);
   useEffect(()=>{if(account)setCapital(account.use_real?account.real_balance:account.mock_balance);},[account,setCapital]);
+
+  // Auto-scan deposits on login to sync real_balance from on-chain
+  const depositScannedRef = useRef(false);
+  useEffect(() => {
+    if (!user || depositScannedRef.current) return;
+    depositScannedRef.current = true;
+    import('./lib/supabase').then(({ supabase: sb }) => {
+      sb?.auth.getSession().then(({ data: { session } }) => {
+        if (!session?.access_token) return;
+        fetch('https://ofjuiciwmwahdwdagzsj.supabase.co/functions/v1/deposit-monitor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        }).catch(() => {});
+      });
+    });
+  }, [user?.id]);
 
   const handleChangeAsset = (id:string,addr?:string,pair?:string) => { setAssetId(id); setCustomAddr(addr); setCustomPair(pair); setPage('trade'); };
   const handleNavigate = (p: Page, subNav?: SubNav) => {
@@ -572,7 +588,7 @@ export default function App() {
                     <span className="text-xs font-semibold text-[#A7B0B7]">{asset.label} — {interval}</span>
                     {loading&&<div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>}
                   </div>
-                  <div style={{height:'calc(100% - 28px)'}}><PriceChart candles={candles} livePrice={livePrice} positions={positions} onQuickTP={p=>setQuickTP(p)} onQuickSL={p=>setQuickSL(p)} theme={chartTheme} onOpenSettings={()=>setShowChartSettings(true)}/></div>
+                  <div style={{height:'calc(100% - 28px)'}}><PriceChart candles={candles} livePrice={livePrice} positions={positions} onQuickTP={p=>setQuickTP(p)} onQuickSL={p=>setQuickSL(p)} theme={chartTheme} onOpenSettings={()=>setShowChartSettings(true)} onPlaceOrder={(_side,tp,sl)=>{if(tp!=null)setQuickTP(tp);if(sl!=null)setQuickSL(sl);setRightTab('trade');}}/></div>
                 </div>
                 <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-3 flex-1 overflow-hidden"><PositionsTable livePrice={livePrice}/></div>
               </div>
