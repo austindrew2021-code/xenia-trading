@@ -121,7 +121,7 @@ interface Props {
 }
 
 export function HomePage({ onNavigate, onShowWallet, onShowAuth }: Props) {
-  const { user, account } = useAuth();
+  const { user, account, saveAccount } = useAuth();
   const { positions, capital } = useTradingStore();
   const [showAll,       setShowAll]       = useState(false);
   const [favItems,      setFavItems]      = useState<string[]>(DEFAULT_FAVS);
@@ -267,9 +267,16 @@ export function HomePage({ onNavigate, onShowWallet, onShowAuth }: Props) {
         <div className="relative p-5">
           <div className="flex items-start justify-between mb-4">
             <div>
-              <p className="text-[11px] text-[#4B5563] uppercase tracking-widest mb-1">
-                {user ? `${account?.use_real ? 'Live' : 'Mock'} Balance` : 'Demo Balance'}
-              </p>
+              {user ? (
+                <button onClick={()=>account&&saveAccount({use_real:!account.use_real})}
+                  className={`flex items-center gap-1.5 text-[11px] uppercase tracking-widest mb-1 font-semibold transition-colors ${account?.use_real?'text-green-400':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>
+                  <div className={`w-1.5 h-1.5 rounded-full ${account?.use_real?'bg-green-400 shadow-[0_0_4px_#4ADE80]':'bg-[#4B5563]'}`}/>
+                  {account?.use_real ? 'Live Balance' : 'Mock Balance'}
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="opacity-50"><path d="M7 16V4m0 0L3 8m4-4l4 4"/><path d="M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+                </button>
+              ) : (
+                <p className="text-[11px] text-[#4B5563] uppercase tracking-widest mb-1">Demo Balance</p>
+              )}
               <p className="text-3xl font-black text-[#F4F6FA]">${dispCap.toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2})}</p>
               <p className={`text-sm mt-1 font-semibold ${openPnl>=0?'text-green-400':'text-red-400'}`}>
                 {openPnl>=0?'+':''}${openPnl.toFixed(2)} open P&L

@@ -222,7 +222,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
   const [hint,         setHint]         = useState('');
   const [drawnCount,   setDrawnCount]   = useState(0);
   const [contextMenu,  setContextMenu]  = useState<ContextMenu | null>(null);
-  const [showOB,       setShowOB]       = useState(true);
+  const [showOB,       setShowOB]       = useState(false);
   // Draggable TP/SL
   const [tpPrice,      setTpPrice]      = useState<number|null>(null);
   const [slPrice,      setSlPrice]      = useState<number|null>(null);

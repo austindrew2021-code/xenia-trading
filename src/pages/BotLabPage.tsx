@@ -253,10 +253,11 @@ export function BotLabPage() {
   const [loading,     setLoading]    = useState(true);
   const [editing,     setEditing]    = useState<Partial<CustomBot>|null|'new'>(null);
   const [tab,         setTab]        = useState<'lab'|'active'|'market'>('lab');
-  const [deploying,   setDeploying]  = useState<CustomBot|null>(null);
-  const [publicBots,  setPublicBots] = useState<CustomBot[]>([]);
-  const [marketLoading,setMarketLoad]= useState(false);
-  const [usingBot,    setUsingBot]   = useState<string|null>(null);
+  const [deploying,       setDeploying]      = useState<CustomBot|null>(null);
+  const [marketDeploying, setMarketDeploying]= useState<CustomBot|null>(null);
+  const [publicBots,      setPublicBots]     = useState<CustomBot[]>([]);
+  const [marketLoading,   setMarketLoad]     = useState(false);
+  const [usingBot,        setUsingBot]       = useState<string|null>(null);
 
   const load = async () => {
     if(!supabase||!user){setLoading(false);return;}
@@ -274,20 +275,21 @@ export function BotLabPage() {
     setMarketLoad(false);
   };
 
-  const usePublicBot = async (bot: CustomBot) => {
-    if(!supabase||!user) return;
+  const confirmMarketDeploy = async (target: 'spot'|'leverage'|'both') => {
+    if(!supabase||!user||!marketDeploying) return;
+    const bot = marketDeploying;
     setUsingBot(bot.id);
-    // Clone bot into user's lab
+    setMarketDeploying(null);
+    // Clone bot and immediately activate with chosen target
     await supabase.from('custom_bots').insert({
-      user_id:user.id, name:`${bot.name} (copy)`, description:bot.description,
-      status:'lab', is_public:false, indicators:bot.indicators,
+      user_id:user.id, name:bot.name, description:bot.description,
+      status:'active', target, is_public:false, indicators:bot.indicators,
       candle_patterns:bot.candle_patterns, entry_rules:bot.entry_rules,
-      exit_rules:bot.exit_rules, risk_rules:bot.risk_rules, fee_pct:0,
+      exit_rules:bot.exit_rules, risk_rules:bot.risk_rules, fee_pct:bot.fee_pct,
     });
-    // Increment use_count on original
     await supabase.from('custom_bots').update({use_count:bot.use_count+1}).eq('id',bot.id);
     setUsingBot(null);
-    setTab('lab');
+    setTab('active');
     await load();
   };
 
@@ -348,6 +350,39 @@ export function BotLabPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#05060B]">
       {editing!==null&&<BotEditor bot={editing==='new'?{}:editing as Partial<CustomBot>} onSave={save} onCancel={()=>setEditing(null)}/>}
+
+      {/* ── Market bot deploy picker ────────────────────────────── */}
+      {marketDeploying&&(
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" onClick={()=>setMarketDeploying(null)}>
+          <div className="bg-[#0B0E14] border border-white/[0.1] rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4" onClick={e=>e.stopPropagation()}>
+            <div>
+              <p className="text-sm font-black text-[#F4F6FA]">Activate "{marketDeploying.name}"</p>
+              <p className="text-[10px] text-[#4B5563] mt-0.5">Choose where this bot will trade</p>
+            </div>
+            <div className="space-y-2">
+              {[
+                ['spot',     'Spot Trading',     'Execute spot buys/sells via Jupiter DEX'],
+                ['leverage', 'Leverage Trading', 'Open leveraged positions 1–300×'],
+                ['both',     'Both',             'Active on both spot and leverage'],
+              ].map(([val,label,desc])=>(
+                <button key={val} onClick={()=>confirmMarketDeploy(val as any)}
+                  className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-[#2BFFF1]/40 hover:bg-[#2BFFF1]/05 transition-all text-left group">
+                  <div className="w-8 h-8 rounded-lg bg-[#2BFFF1]/10 border border-[#2BFFF1]/20 flex items-center justify-center flex-shrink-0 group-hover:bg-[#2BFFF1]/20 transition-all">
+                    {val==='spot'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>}
+                    {val==='leverage'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>}
+                    {val==='both'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-[#F4F6FA] group-hover:text-[#2BFFF1] transition-all">{label}</p>
+                    <p className="text-[10px] text-[#4B5563]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button onClick={()=>setMarketDeploying(null)} className="w-full py-2 rounded-xl border border-white/[0.08] text-xs text-[#4B5563] hover:text-[#A7B0B7] transition-all">Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Deploy target picker ─────────────────────────────────── */}
       {deploying&&(
@@ -452,9 +487,9 @@ export function BotLabPage() {
                       {b.total_pnl!==0&&<div className="text-center"><p className="text-[#4B5563]">PnL</p><p className={`font-bold ${b.total_pnl>=0?'text-green-400':'text-red-400'}`}>${Math.abs(b.total_pnl).toFixed(0)}</p></div>}
                       {b.fee_pct>0&&<div className="text-center"><p className="text-[#4B5563]">Fee</p><p className="font-bold text-[#F59E0B]">{(b.fee_pct*100).toFixed(1)}%</p></div>}
                     </div>
-                    <button onClick={()=>user?usePublicBot(b):undefined} disabled={!user||usingBot===b.id}
+                    <button onClick={()=>user?setMarketDeploying(b):undefined} disabled={!user||usingBot===b.id}
                       className="w-full py-2 rounded-xl text-xs font-bold bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
-                      {usingBot===b.id?'Copying…':user?'Use Bot (copy to Lab)':'Sign in to use'}
+                      {usingBot===b.id?'Activating…':user?'Use Bot':'Sign in to use'}
                     </button>
                   </div>
                 ))}
