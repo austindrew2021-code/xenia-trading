@@ -44,7 +44,7 @@ export interface TradingAccount {
   stats:                    AccountStats;
   monthly_points:           Record<string, MonthPoints>;
   deposits:                 DepositRecord[];
-  deposit_wallets:          Record<string,string>;
+  deposit_wallets:          Record<string, string>;
 }
 
 interface AuthCtx {
@@ -54,14 +54,14 @@ interface AuthCtx {
   loading: boolean;
   liveSOL:    number;
   liveSOLUSD: number;
-  signUp:       (email: string, password: string, username: string) => Promise<string | null>;
-  signIn:       (email: string, password: string) => Promise<string | null>;
-  signOut:      () => Promise<void>;
-  saveAccount:  (patch: Partial<TradingAccount>) => Promise<void>;
-  syncPositions:(positions: Position[]) => void;
-  recordTrade:  (notionalUsd: number, pnl: number, won: boolean) => void;
-  connectWallet:(type: 'sol' | 'evm', address: string) => void;
-  addDeposit:   (txHash: string, amountUsd: number, asset: string, chain: string) => Promise<void>;
+  signUp:        (email: string, password: string, username: string) => Promise<string | null>;
+  signIn:        (email: string, password: string) => Promise<string | null>;
+  signOut:       () => Promise<void>;
+  saveAccount:   (patch: Partial<TradingAccount>) => Promise<void>;
+  syncPositions: (positions: Position[]) => void;
+  recordTrade:   (notionalUsd: number, pnl: number, won: boolean) => void;
+  connectWallet: (type: 'sol' | 'evm', address: string) => void;
+  addDeposit:    (txHash: string, amountUsd: number, asset: string, chain: string) => Promise<void>;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -89,7 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Local pending state — accumulated between debounced writes
   const pending = useRef<Partial<TradingAccount>>({});
 
-  // ── Flush pending changes to Supabase — ONE update call ────────────────
+  // ── Flush pending changes to Supabase — ONE update call ───────────────
   const flush = useCallback(async (uid: string, patch: Partial<TradingAccount>) => {
     if (!supabase || Object.keys(patch).length === 0) return;
     await supabase
@@ -98,13 +98,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq('user_id', uid);
   }, []);
 
-  // Debounced flush — waits 2s after last change before writing
+  // Debounced flush — waits 2 s after last change before writing
   const debouncedFlush = useDebounce(
     (uid: string, patch: Partial<TradingAccount>) => {
       flush(uid, patch);
       pending.current = {};
     },
-    2000
+    2000,
   );
 
   // ── Queue a change locally + schedule debounced write ─────────────────
@@ -115,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     debouncedFlush(user.id, pending.current);
   }, [user, debouncedFlush]);
 
-  // ── Fetch account from Supabase ────────────────────────────────────────
+  // ── Fetch account from Supabase ───────────────────────────────────────
   const fetchAccount = useCallback(async (uid: string) => {
     if (!supabase) return;
     const { data } = await supabase
@@ -128,7 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const platformAddr = data.platform_wallet_address ?? data.platform_sol_address ?? null;
       const dw = data.deposit_wallets ?? {};
       // Normalize deposit_wallets keys to lowercase
-      const normalizedDW: Record<string,string> = {};
+      const normalizedDW: Record<string, string> = {};
       for (const [k, v] of Object.entries(dw)) normalizedDW[k.toLowerCase()] = v as string;
 
       setAccount({
@@ -140,14 +140,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         bot_mock_balance:  data.bot_mock_balance  ?? 0,
         use_real:          data.use_real           ?? false,
         positions:         data.positions         ?? [],
-        stats:             data.stats             ?? { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
+        stats:             data.stats             ?? { totalPnl: 0, winCount: 0, lossCount: 0, tradeCount: 0 },
         monthly_points:    data.monthly_points    ?? {},
         deposits:          data.deposits          ?? [],
       } as TradingAccount);
     }
   }, []);
 
-  // ── Auth listener ──────────────────────────────────────────────────────
+  // ── Auth listener ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
 
@@ -171,7 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, [fetchAccount]);
 
-  // ── Realtime balance sync ──────────────────────────────────────────────
+  // ── Realtime balance sync from Supabase Realtime ──────────────────────
   useEffect(() => {
     if (!supabase || !user) return;
     const channel = supabase
@@ -197,7 +197,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { supabase?.removeChannel(channel); };
   }, [user]);
 
-  // ── Auth actions ───────────────────────────────────────────────────────
+  // ── Live on-chain SOL balance ─────────────────────────────────────────
+  // Preference order: platform_wallet_address > deposit_wallets.sol > hardcoded platform address
+  const PLATFORM_SOL_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
+  const solDepositAddress: string =
+    account?.platform_wallet_address ||
+    account?.deposit_wallets?.sol ||
+    account?.deposit_wallets?.SOL ||
+    PLATFORM_SOL_ADDRESS;
+  const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(solDepositAddress);
+
+  // ── Sync on-chain SOL balance → Supabase when it changes ─────────────
+  const lastSyncedSOL = useRef(-1);
+
+  useEffect(() => {
+    void (async () => {
+      if (!user || !supabase) return;
+      // Never push a zero — hook hasn't resolved yet
+      if (liveSOL <= 0) return;
+      // Skip if unchanged since last successful sync
+      if (Math.abs(liveSOL - lastSyncedSOL.current) < 0.000001) return;
+      lastSyncedSOL.current = liveSOL;
+
+      const { error } = await supabase
+        .from('trading_accounts')
+        .update({ real_balance: liveSOLUSD })
+        .eq('user_id', user.id);
+
+      if (error) {
+        console.error('[AuthContext] real_balance sync failed:', error.message, error.details);
+      } else {
+        setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
+      }
+    })();
+  // liveSOLUSD always moves with liveSOL; [liveSOL] is the correct dep
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSOL]);
+
+  // ── Connect wallet — immediate write ──────────────────────────────────
+  const connectWallet = useCallback((type: 'sol' | 'evm', address: string) => {
+    const patch = type === 'sol'
+      ? { sol_address: address }
+      : { evm_address: address };
+    queue(patch);
+  }, [queue]);
+
+  // ── Add deposit — immediate write ─────────────────────────────────────
+  const addDeposit = async (txHash: string, amountUsd: number, asset: string, chain: string) => {
+    if (!account || !user || !supabase) return;
+    const newDeposit: DepositRecord = {
+      txHash, amountUsd, asset, chain, status: 'pending', createdAt: Date.now(),
+    };
+    const newDeposits = [...account.deposits, newDeposit];
+    const newBalance  = account.real_balance + amountUsd;
+    await saveAccount({ deposits: newDeposits, real_balance: newBalance });
+  };
+
+  // ── Auth actions ──────────────────────────────────────────────────────
   const signUp = async (email: string, password: string, username: string): Promise<string | null> => {
     if (!supabase) return 'Supabase not configured';
     const { data, error } = await supabase.auth.signUp({ email, password });
@@ -213,7 +269,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         bot_mock_balance:  0,
         use_real:          false,
         positions:         [],
-        stats:             { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
+        stats:             { totalPnl: 0, winCount: 0, lossCount: 0, tradeCount: 0 },
         monthly_points:    {},
         deposits:          [],
       });
@@ -239,24 +295,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccount(null);
   };
 
-  // ── Direct save (immediate, bypasses debounce) ─────────────────────────
+  // ── Direct save (immediate, bypasses debounce) ────────────────────────
   const saveAccount = async (patch: Partial<TradingAccount>) => {
     if (!user || !supabase) return;
     setAccount(prev => prev ? { ...prev, ...patch } : prev);
-    await supabase.from('trading_accounts').update(patch).eq('user_id', user.id);
+    const { error } = await supabase
+      .from('trading_accounts')
+      .update(patch)
+      .eq('user_id', user.id);
+    if (error) {
+      console.error('[AuthContext] saveAccount failed:', error.message, error.details);
+    }
   };
 
-  // ── Sync positions — debounced ─────────────────────────────────────────
-  // Called after every open/close — batches rapid bot activity into one write
+  // ── Sync positions — debounced ────────────────────────────────────────
   const syncPositions = useCallback((positions: Position[]) => {
-    // Keep only last 100 closed + all open to cap JSONB size
     const open   = positions.filter(p => p.status === 'open');
     const closed = positions.filter(p => p.status !== 'open').slice(-100);
     queue({ positions: [...open, ...closed] });
   }, [queue]);
 
   // ── Record trade stats + points — debounced ───────────────────────────
-  // Accumulates into the existing monthly_points and stats, then queues one write
   const recordTrade = useCallback((notionalUsd: number, pnl: number, won: boolean) => {
     if (!account) return;
     const month = currentMonth();
@@ -282,53 +341,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     queue({ monthly_points: newMonthly, stats: newStats });
   }, [account, queue]);
-
-  // ── Live on-chain SOL balance (hardcoded fallback = platform address) ──
-  const PLATFORM_SOL_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
-  const solDepositAddress: string =
-    account?.platform_wallet_address ||
-    account?.deposit_wallets?.sol ||
-    account?.deposit_wallets?.SOL ||
-    PLATFORM_SOL_ADDRESS;
-  const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(solDepositAddress);
-
-  // Sync on-chain SOL balance → Supabase when SOL amount changes
-  const lastSyncedSOL = useRef(-1);
-  const initialSyncDone = useRef(false);
-  useEffect(() => { void (async () => {
-    if (!user || !supabase) return;
-    // Skip only if we've synced before AND balance hasn't changed
-    if (initialSyncDone.current && Math.abs(liveSOL - lastSyncedSOL.current) < 0.000001) return;
-    initialSyncDone.current = true;
-    lastSyncedSOL.current = liveSOL;
-    const stored = account?.real_balance ?? 0;
-    if (Math.abs(liveSOLUSD - stored) < 0.01) return; // already accurate
-    const { error } = await supabase.from('trading_accounts')
-      .update({ real_balance: liveSOLUSD })
-      .eq('user_id', user.id);
-    if (!error) setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
-  })(); // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveSOL]);
-
-  // ── Connect wallet — immediate write ──────────────────────────────────
-  const connectWallet = useCallback((type: 'sol' | 'evm', address: string) => {
-    const patch = type === 'sol'
-      ? { sol_address: address }
-      : { evm_address: address };
-    queue(patch);
-  }, [queue]);
-
-  // ── Add deposit — immediate write ─────────────────────────────────────
-  const addDeposit = async (txHash: string, amountUsd: number, asset: string, chain: string) => {
-    if (!account || !user || !supabase) return;
-    const newDeposit: DepositRecord = {
-      txHash, amountUsd, asset, chain, status: 'pending', createdAt: Date.now(),
-    };
-    const newDeposits = [...account.deposits, newDeposit];
-    const newBalance  = account.real_balance + amountUsd;
-    // Immediate write for financial data
-    await saveAccount({ deposits: newDeposits, real_balance: newBalance });
-  };
 
   return (
     <Ctx.Provider value={{
