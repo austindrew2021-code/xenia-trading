@@ -1,153 +1,120 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Connection, PublicKey } from '@solana/web3.js';
 
-// ── RPC endpoints — Alchemy (real key) is always tried first ──────────────
-const ALCHEMY_HTTP = 'https://solana-mainnet.g.alchemy.com/v2/7iiXgQQtGUhyi7a-fC0Sd';
-const ALCHEMY_WSS  = 'wss://solana-mainnet.g.alchemy.com/v2/7iiXgQQtGUhyi7a-fC0Sd';
+const ALCHEMY_RPC = 'https://solana-mainnet.g.alchemy.com/v2/7iiXgQQtGUhyi7a-fC0Sd';
 
-const RPC_FALLBACKS = [
-  'https://rpc.ankr.com/solana',
+const RPC_ENDPOINTS = [
+  ALCHEMY_RPC,
   'https://api.mainnet-beta.solana.com',
+  'https://rpc.ankr.com/solana',
 ];
-
 const LAMPORTS_PER_SOL = 1_000_000_000;
+const FALLBACK_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
 
-// ── Module-level SOL price cache (shared across all hook instances) ────────
 let _solPrice = 0;
 let _priceTs  = 0;
 
 async function fetchSOLPrice(): Promise<number> {
   if (_solPrice > 0 && Date.now() - _priceTs < 30_000) return _solPrice;
   try {
-    const r = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
-    );
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
     const d = await r.json();
     const p = d?.solana?.usd;
     if (p && p > 0) { _solPrice = p; _priceTs = Date.now(); }
-  } catch { /* keep last known price */ }
+  } catch {}
+  if (_solPrice === 0) {
+    try {
+      const r = await fetch('https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112');
+      const d = await r.json();
+      const p = parseFloat(d?.pairs?.[0]?.priceUsd ?? '0');
+      if (p > 0) { _solPrice = p; _priceTs = Date.now(); }
+    } catch {}
+  }
   return _solPrice;
 }
 
+export { fetchSOLPrice, ALCHEMY_RPC, LAMPORTS_PER_SOL };
+
 export interface SolanaBalanceResult {
-  sol:     number;
-  usd:     number;
+  sol: number;
+  usd: number;
   loading: boolean;
   refresh: () => void;
 }
 
-export function useSolanaBalance(
-  address: string | null | undefined,
-): SolanaBalanceResult {
-  const [sol,     setSol]     = useState(0);
-  const [usd,     setUsd]     = useState(0);
+export function useSolanaBalance(address: string | null | undefined): SolanaBalanceResult {
+  const addr = address || FALLBACK_ADDRESS;
+  const [sol, setSol]         = useState(0);
+  const [usd, setUsd]         = useState(0);
   const [loading, setLoading] = useState(false);
-
   const mountedRef = useRef(true);
-  // Keep one persistent Alchemy connection for WebSocket subscriptions
-  const alchemyConnRef = useRef<Connection | null>(null);
-  const subIdRef       = useRef<number | undefined>(undefined);
+  const connRef    = useRef<Connection | null>(null);
 
-  // ── Convert lamports → SOL + USD and push to state ───────────────────
   const applyLamports = useCallback(async (lamports: number) => {
     if (!mountedRef.current) return;
-    const price  = await fetchSOLPrice();
+    const price = await fetchSOLPrice();
     if (!mountedRef.current) return;
     const solAmt = lamports / LAMPORTS_PER_SOL;
     setSol(solAmt);
     setUsd(solAmt * price);
   }, []);
 
-  // ── One-shot balance fetch: Alchemy first, fallbacks on error ─────────
+  const rpcIdx = useRef(0);
   const refresh = useCallback(async () => {
-    if (!address) return;
-    const pubkey = new PublicKey(address);
-
-    // Always try Alchemy first
-    try {
-      const conn    = new Connection(ALCHEMY_HTTP, 'confirmed');
-      const lamports = await conn.getBalance(pubkey);
-      await applyLamports(lamports);
-      return;
-    } catch (err) {
-      console.warn('[useSolanaBalance] Alchemy HTTP failed, trying fallbacks', err);
-    }
-
-    // Fallback RPCs
-    for (const rpc of RPC_FALLBACKS) {
+    if (!addr) return;
+    for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
       try {
-        const conn     = new Connection(rpc, 'confirmed');
-        const lamports = await conn.getBalance(pubkey);
+        const idx = (rpcIdx.current + i) % RPC_ENDPOINTS.length;
+        const conn = new Connection(RPC_ENDPOINTS[idx], 'confirmed');
+        const lamports = await conn.getBalance(new PublicKey(addr));
+        connRef.current = conn;
+        rpcIdx.current = idx;
         await applyLamports(lamports);
         return;
-      } catch { /* try next */ }
+      } catch {}
     }
+  }, [addr, applyLamports]);
 
-    console.error('[useSolanaBalance] All RPC endpoints failed for', address);
-  }, [address, applyLamports]);
-
-  // ── Main effect: mount connection, fetch balance, subscribe WS ────────
   useEffect(() => {
-    if (!address) {
-      setSol(0); setUsd(0);
-      return;
-    }
-
     mountedRef.current = true;
-    let pollingTimer: ReturnType<typeof setInterval> | undefined;
+    if (!addr) { setSol(0); setUsd(0); return; }
 
-    // Validate address before hitting the network
-    let pubkey: PublicKey;
-    try { pubkey = new PublicKey(address); }
-    catch { console.error('[useSolanaBalance] Invalid address:', address); return; }
+    const conn = new Connection(ALCHEMY_RPC, { commitment: 'confirmed' });
+    connRef.current = conn;
+    const pubkey = new PublicKey(addr);
 
-    // ── Initial fetch ───────────────────────────────────────────────────
     setLoading(true);
-    refresh().finally(() => {
-      if (mountedRef.current) setLoading(false);
-    });
-
-    // ── WebSocket subscription via Alchemy ──────────────────────────────
-    const setupWS = () => {
-      try {
-        const conn = new Connection(ALCHEMY_HTTP, {
-          commitment: 'confirmed',
-          wsEndpoint: ALCHEMY_WSS,
-        });
-        alchemyConnRef.current = conn;
-
-        subIdRef.current = conn.onAccountChange(
-          pubkey,
-          (accountInfo) => {
-            applyLamports(accountInfo.lamports);
-          },
-          'confirmed',
-        );
-      } catch (err) {
-        console.warn('[useSolanaBalance] WebSocket setup failed:', err);
-        // Polling will cover this case
+    (async () => {
+      for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
+        try {
+          const idx = (rpcIdx.current + i) % RPC_ENDPOINTS.length;
+          const c = i === 0 ? conn : new Connection(RPC_ENDPOINTS[idx], 'confirmed');
+          const lamports = await c.getBalance(pubkey);
+          if (i > 0) { connRef.current = c; rpcIdx.current = idx; }
+          await applyLamports(lamports);
+          return;
+        } catch {}
       }
-    };
+    })().finally(() => { if (mountedRef.current) setLoading(false); });
 
-    setupWS();
+    let subId: number | undefined;
+    try {
+      subId = conn.onAccountChange(pubkey, (accountInfo) => {
+        applyLamports(accountInfo.lamports);
+      }, 'confirmed');
+    } catch {}
 
-    // ── Polling fallback every 15 s (covers WS drops / rate limits) ─────
-    pollingTimer = setInterval(refresh, 15_000);
+    const timer = setInterval(refresh, 10_000);
 
     return () => {
       mountedRef.current = false;
-      clearInterval(pollingTimer);
-
-      // Clean up WebSocket subscription
-      const conn  = alchemyConnRef.current;
-      const subId = subIdRef.current;
-      if (conn && subId !== undefined) {
-        try { conn.removeAccountChangeListener(subId); } catch { /* ignore */ }
+      clearInterval(timer);
+      if (subId !== undefined) {
+        try { conn.removeAccountChangeListener(subId); } catch {}
       }
-      alchemyConnRef.current = null;
-      subIdRef.current       = undefined;
+      connRef.current = null;
     };
-  }, [address, applyLamports, refresh]);
+  }, [addr, applyLamports, refresh]);
 
   return { sol, usd, loading, refresh };
 }
