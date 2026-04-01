@@ -4,87 +4,48 @@ import { supabase, currentMonth, POINTS_PER_USD } from '../lib/supabase';
 import { Position } from '../types';
 import { useSolanaBalance } from '../hooks/useSolanaBalance';
 
-interface AccountStats {
-  totalPnl:   number;
-  winCount:   number;
-  lossCount:  number;
-  tradeCount: number;
-}
-
-interface MonthPoints {
-  points:   number;
-  volume:   number;
-  trades:   number;
-}
-
-interface DepositRecord {
-  txHash:    string;
-  amountUsd: number;
-  asset:     string;
-  chain:     string;
-  status:    'pending' | 'confirmed';
-  createdAt: number;
-}
+interface AccountStats { totalPnl: number; winCount: number; lossCount: number; tradeCount: number; }
+interface MonthPoints { points: number; volume: number; trades: number; }
+interface DepositRecord { txHash: string; amountUsd: number; asset: string; chain: string; status: 'pending' | 'confirmed'; createdAt: number; }
 
 export interface TradingAccount {
-  id:                 string;
-  user_id:            string;
-  username:           string | null;
-  mock_balance:       number;
-  real_balance:       number;
-  spot_live_balance:  number;
-  bot_balance:        number;
-  bot_mock_balance:   number;
-  use_real:           boolean;
-  sol_address:              string | null;
-  evm_address:              string | null;
-  platform_wallet_address:  string | null;
-  positions:                Position[];
-  stats:                    AccountStats;
-  monthly_points:           Record<string, MonthPoints>;
-  deposits:                 DepositRecord[];
-  deposit_wallets:          Record<string,string>;
+  id: string; user_id: string; username: string | null;
+  mock_balance: number; real_balance: number; spot_live_balance: number;
+  bot_balance: number; bot_mock_balance: number; use_real: boolean;
+  sol_address: string | null; evm_address: string | null;
+  platform_wallet_address: string | null;
+  positions: Position[]; stats: AccountStats;
+  monthly_points: Record<string, MonthPoints>;
+  deposits: DepositRecord[]; deposit_wallets: Record<string, string>;
 }
 
 interface AuthCtx {
-  user:    User | null;
-  session: Session | null;
-  account: TradingAccount | null;
-  loading: boolean;
-  liveSOL:    number;
-  liveSOLUSD: number;
-  signUp:         (email: string, password: string, username: string) => Promise<string | null>;
-  signIn:         (email: string, password: string) => Promise<string | null>;
-  signOut:        () => Promise<void>;
-  saveAccount:    (patch: Partial<TradingAccount>) => Promise<void>;
+  user: User | null; session: Session | null; account: TradingAccount | null; loading: boolean;
+  liveSOL: number; liveSOLUSD: number;
+  signUp: (email: string, password: string, username: string) => Promise<string | null>;
+  signIn: (email: string, password: string) => Promise<string | null>;
+  signOut: () => Promise<void>;
+  saveAccount: (patch: Partial<TradingAccount>) => Promise<void>;
   refreshBalance: () => Promise<void>;
-  syncPositions:  (positions: Position[]) => void;
-  recordTrade:    (notionalUsd: number, pnl: number, won: boolean) => void;
-  connectWallet:  (type: 'sol' | 'evm', address: string) => void;
-  addDeposit:     (txHash: string, amountUsd: number, asset: string, chain: string) => Promise<void>;
+  syncPositions: (positions: Position[]) => void;
+  recordTrade: (notionalUsd: number, pnl: number, won: boolean) => void;
+  connectWallet: (type: 'sol' | 'evm', address: string) => void;
+  addDeposit: (txHash: string, amountUsd: number, asset: string, chain: string) => Promise<void>;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
-export function useAuth() {
-  const c = useContext(Ctx);
-  if (!c) throw new Error('useAuth must be inside AuthProvider');
-  return c;
-}
+export function useAuth() { const c = useContext(Ctx); if (!c) throw new Error('useAuth must be inside AuthProvider'); return c; }
 
 function useDebounce(fn: (...args: any[]) => void, ms: number) {
   const timer = useRef<ReturnType<typeof setTimeout>>();
-  return useCallback((...args: any[]) => {
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => fn(...args), ms);
-  }, [fn, ms]);
+  return useCallback((...args: any[]) => { clearTimeout(timer.current); timer.current = setTimeout(() => fn(...args), ms); }, [fn, ms]);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user,    setUser]    = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [account, setAccount] = useState<TradingAccount | null>(null);
   const [loading, setLoading] = useState(true);
-
   const pending = useRef<Partial<TradingAccount>>({});
 
   const flush = useCallback(async (uid: string, patch: Partial<TradingAccount>) => {
@@ -92,13 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.from('trading_accounts').update(patch).eq('user_id', uid);
   }, []);
 
-  const debouncedFlush = useDebounce(
-    (uid: string, patch: Partial<TradingAccount>) => {
-      flush(uid, patch);
-      pending.current = {};
-    },
-    2000
-  );
+  const debouncedFlush = useDebounce((uid: string, patch: Partial<TradingAccount>) => { flush(uid, patch); pending.current = {}; }, 2000);
 
   const queue = useCallback((patch: Partial<TradingAccount>) => {
     if (!user) return;
@@ -113,91 +68,63 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (data) {
       const platformAddr = data.platform_wallet_address ?? data.platform_sol_address ?? null;
       const dw = data.deposit_wallets ?? {};
-      const normalizedDW: Record<string,string> = {};
+      const normalizedDW: Record<string, string> = {};
       for (const [k, v] of Object.entries(dw)) normalizedDW[k.toLowerCase()] = v as string;
-
       setAccount({
-        ...data,
-        platform_wallet_address: platformAddr,
-        deposit_wallets:   normalizedDW,
-        spot_live_balance: data.spot_live_balance ?? 0,
-        bot_balance:       data.bot_balance       ?? 0,
-        bot_mock_balance:  data.bot_mock_balance  ?? 0,
-        use_real:          data.use_real           ?? false,
-        positions:         data.positions         ?? [],
-        stats:             data.stats             ?? { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
-        monthly_points:    data.monthly_points    ?? {},
-        deposits:          data.deposits          ?? [],
+        ...data, platform_wallet_address: platformAddr, deposit_wallets: normalizedDW,
+        spot_live_balance: data.spot_live_balance ?? 0, bot_balance: data.bot_balance ?? 0,
+        bot_mock_balance: data.bot_mock_balance ?? 0, use_real: data.use_real ?? false,
+        positions: data.positions ?? [], stats: data.stats ?? { totalPnl: 0, winCount: 0, lossCount: 0, tradeCount: 0 },
+        monthly_points: data.monthly_points ?? {}, deposits: data.deposits ?? [],
       } as TradingAccount);
     }
   }, []);
 
-  // ── Auth listener ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      if (data.session?.user) {
-        fetchAccount(data.session.user.id).then(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
+      setSession(data.session); setUser(data.session?.user ?? null);
+      if (data.session?.user) fetchAccount(data.session.user.id).then(() => setLoading(false));
+      else setLoading(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, sess) => {
-      setSession(sess);
-      setUser(sess?.user ?? null);
-      if (sess?.user) fetchAccount(sess.user.id);
-      else { setAccount(null); }
+      setSession(sess); setUser(sess?.user ?? null);
+      if (sess?.user) fetchAccount(sess.user.id); else setAccount(null);
     });
     return () => subscription.unsubscribe();
   }, [fetchAccount]);
 
-  // ── Realtime balance sync ──────────────────────────────────────────────
+  // Realtime balance sync
   useEffect(() => {
     if (!supabase || !user) return;
-    const channel = supabase
-      .channel(`account:${user.id}`)
-      .on('postgres_changes', {
-        event: 'UPDATE', schema: 'public', table: 'trading_accounts',
-        filter: `user_id=eq.${user.id}`,
-      }, (payload) => {
+    const channel = supabase.channel(`account:${user.id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'trading_accounts', filter: `user_id=eq.${user.id}` }, (payload) => {
         const d = payload.new as any;
         setAccount(prev => prev ? {
           ...prev,
-          mock_balance:      d.mock_balance      ?? prev.mock_balance,
-          real_balance:      d.real_balance      ?? prev.real_balance,
+          mock_balance: d.mock_balance ?? prev.mock_balance,
+          real_balance: d.real_balance ?? prev.real_balance,
           spot_live_balance: d.spot_live_balance ?? prev.spot_live_balance,
-          bot_balance:       d.bot_balance       ?? prev.bot_balance,
-          bot_mock_balance:  d.bot_mock_balance  ?? prev.bot_mock_balance,
-          use_real:          d.use_real           ?? prev.use_real,
+          bot_balance: d.bot_balance ?? prev.bot_balance,
+          bot_mock_balance: d.bot_mock_balance ?? prev.bot_mock_balance,
+          use_real: d.use_real ?? prev.use_real,
           platform_wallet_address: d.platform_wallet_address ?? d.platform_sol_address ?? prev.platform_wallet_address,
-          deposit_wallets:   d.deposit_wallets   ?? prev.deposit_wallets,
+          deposit_wallets: d.deposit_wallets ?? prev.deposit_wallets,
         } : prev);
-      })
-      .subscribe();
+      }).subscribe();
     return () => { supabase?.removeChannel(channel); };
   }, [user]);
 
-  // ── Auth actions ───────────────────────────────────────────────────────
   const signUp = async (email: string, password: string, username: string): Promise<string | null> => {
     if (!supabase) return 'Supabase not configured';
     const { data, error } = await supabase.auth.signUp({ email, password });
     if (error) return error.message;
     if (data.user) {
       await supabase.from('trading_accounts').insert({
-        user_id:           data.user.id,
-        username,
-        mock_balance:      1000,
-        real_balance:      0,
-        spot_live_balance: 0,
-        bot_balance:       0,
-        bot_mock_balance:  0,
-        use_real:          false,
-        positions:         [],
-        stats:             { totalPnl:0, winCount:0, lossCount:0, tradeCount:0 },
-        monthly_points:    {},
-        deposits:          [],
+        user_id: data.user.id, username, mock_balance: 1000, real_balance: 0,
+        spot_live_balance: 0, bot_balance: 0, bot_mock_balance: 0, use_real: false,
+        positions: [], stats: { totalPnl: 0, winCount: 0, lossCount: 0, tradeCount: 0 },
+        monthly_points: {}, deposits: [],
       });
       await fetchAccount(data.user.id);
     }
@@ -212,41 +139,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     if (!supabase) return;
-    if (user && Object.keys(pending.current).length > 0) {
-      await flush(user.id, pending.current);
-      pending.current = {};
-    }
-    await supabase.auth.signOut();
-    setAccount(null);
+    if (user && Object.keys(pending.current).length > 0) { await flush(user.id, pending.current); pending.current = {}; }
+    await supabase.auth.signOut(); setAccount(null);
   };
 
-  const saveAccount = async (patch: Partial<TradingAccount>) => {
+  // Direct save — updates local state immediately, then persists to DB
+  const saveAccount = useCallback(async (patch: Partial<TradingAccount>) => {
     if (!user || !supabase) return;
+    // Update local state FIRST (optimistic)
     setAccount(prev => prev ? { ...prev, ...patch } : prev);
-    await supabase.from('trading_accounts').update(patch).eq('user_id', user.id);
-  };
+    // Then persist to DB
+    try {
+      await supabase.from('trading_accounts').update(patch).eq('user_id', user.id);
+    } catch (e) {
+      console.error('saveAccount DB write failed:', e);
+    }
+  }, [user]);
 
-  // ── Refresh all balances from DB (call after trade/transfer/withdraw) ──
+  // Refresh ONLY balance fields from DB — does NOT touch use_real to avoid race conditions
   const refreshBalance = useCallback(async () => {
     if (!user || !supabase) return;
     const { data } = await supabase.from('trading_accounts')
-      .select('real_balance,mock_balance,spot_live_balance,bot_balance,bot_mock_balance,use_real')
+      .select('real_balance,mock_balance,spot_live_balance,bot_balance,bot_mock_balance')
       .eq('user_id', user.id).single();
     if (data) {
       setAccount(prev => prev ? {
         ...prev,
-        real_balance:      data.real_balance      ?? prev.real_balance,
-        mock_balance:      data.mock_balance      ?? prev.mock_balance,
+        real_balance: data.real_balance ?? prev.real_balance,
+        mock_balance: data.mock_balance ?? prev.mock_balance,
         spot_live_balance: data.spot_live_balance ?? prev.spot_live_balance,
-        bot_balance:       data.bot_balance       ?? prev.bot_balance,
-        bot_mock_balance:  data.bot_mock_balance  ?? prev.bot_mock_balance,
-        use_real:          data.use_real           ?? prev.use_real,
+        bot_balance: data.bot_balance ?? prev.bot_balance,
+        bot_mock_balance: data.bot_mock_balance ?? prev.bot_mock_balance,
+        // NOTE: intentionally NOT overwriting use_real here to prevent race conditions
       } : prev);
     }
   }, [user]);
 
   const syncPositions = useCallback((positions: Position[]) => {
-    const open   = positions.filter(p => p.status === 'open');
+    const open = positions.filter(p => p.status === 'open');
     const closed = positions.filter(p => p.status !== 'open').slice(-100);
     queue({ positions: [...open, ...closed] });
   }, [queue]);
@@ -254,76 +184,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const recordTrade = useCallback((notionalUsd: number, pnl: number, won: boolean) => {
     if (!account) return;
     const month = currentMonth();
-    const pts   = Math.floor(notionalUsd * POINTS_PER_USD);
+    const pts = Math.floor(notionalUsd * POINTS_PER_USD);
     const prevMonth = account.monthly_points[month] ?? { points: 0, volume: 0, trades: 0 };
-    const newMonthly = {
-      ...account.monthly_points,
-      [month]: {
-        points:  prevMonth.points  + pts,
-        volume:  prevMonth.volume  + notionalUsd,
-        trades:  prevMonth.trades  + 1,
-      },
-    };
-    const prevStats = account.stats;
-    const newStats: AccountStats = {
-      totalPnl:   prevStats.totalPnl   + pnl,
-      winCount:   prevStats.winCount   + (won ? 1 : 0),
-      lossCount:  prevStats.lossCount  + (won ? 0 : 1),
-      tradeCount: prevStats.tradeCount + 1,
-    };
+    const newMonthly = { ...account.monthly_points, [month]: { points: prevMonth.points + pts, volume: prevMonth.volume + notionalUsd, trades: prevMonth.trades + 1 } };
+    const ps = account.stats;
+    const newStats: AccountStats = { totalPnl: ps.totalPnl + pnl, winCount: ps.winCount + (won ? 1 : 0), lossCount: ps.lossCount + (won ? 0 : 1), tradeCount: ps.tradeCount + 1 };
     queue({ monthly_points: newMonthly, stats: newStats });
   }, [account, queue]);
 
-  // ── Live on-chain SOL balance ──────────────────────────────────────────
   const PLATFORM_SOL_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
-  const solDepositAddress: string =
-    account?.platform_wallet_address ||
-    account?.deposit_wallets?.sol ||
-    account?.deposit_wallets?.SOL ||
-    PLATFORM_SOL_ADDRESS;
+  const solDepositAddress: string = account?.platform_wallet_address || account?.deposit_wallets?.sol || account?.deposit_wallets?.SOL || PLATFORM_SOL_ADDRESS;
   const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(solDepositAddress);
 
-  // Sync on-chain SOL balance → Supabase
+  // Sync on-chain SOL → DB
   const lastSyncedSOL = useRef(-1);
   const initialSyncDone = useRef(false);
   useEffect(() => { void (async () => {
     if (!user || !supabase) return;
     if (initialSyncDone.current && Math.abs(liveSOL - lastSyncedSOL.current) < 0.000001) return;
-    initialSyncDone.current = true;
-    lastSyncedSOL.current = liveSOL;
+    initialSyncDone.current = true; lastSyncedSOL.current = liveSOL;
     const stored = account?.real_balance ?? 0;
     if (Math.abs(liveSOLUSD - stored) < 0.01) return;
-    const { error } = await supabase.from('trading_accounts')
-      .update({ real_balance: liveSOLUSD })
-      .eq('user_id', user.id);
+    const { error } = await supabase.from('trading_accounts').update({ real_balance: liveSOLUSD }).eq('user_id', user.id);
     if (!error) setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
-  })(); // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveSOL]);
+  })(); }, [liveSOL]);
 
   const connectWallet = useCallback((type: 'sol' | 'evm', address: string) => {
-    const patch = type === 'sol'
-      ? { sol_address: address }
-      : { evm_address: address };
-    queue(patch);
+    queue(type === 'sol' ? { sol_address: address } : { evm_address: address });
   }, [queue]);
 
   const addDeposit = async (txHash: string, amountUsd: number, asset: string, chain: string) => {
     if (!account || !user || !supabase) return;
-    const newDeposit: DepositRecord = {
-      txHash, amountUsd, asset, chain, status: 'pending', createdAt: Date.now(),
-    };
-    const newDeposits = [...account.deposits, newDeposit];
-    const newBalance  = account.real_balance + amountUsd;
-    await saveAccount({ deposits: newDeposits, real_balance: newBalance });
+    const nd: DepositRecord = { txHash, amountUsd, asset, chain, status: 'pending', createdAt: Date.now() };
+    await saveAccount({ deposits: [...account.deposits, nd], real_balance: account.real_balance + amountUsd });
   };
 
   return (
-    <Ctx.Provider value={{
-      user, session, account, loading,
-      liveSOL, liveSOLUSD,
-      signUp, signIn, signOut, saveAccount, refreshBalance,
-      syncPositions, recordTrade, connectWallet, addDeposit,
-    }}>
+    <Ctx.Provider value={{ user, session, account, loading, liveSOL, liveSOLUSD, signUp, signIn, signOut, saveAccount, refreshBalance, syncPositions, recordTrade, connectWallet, addDeposit }}>
       {children}
     </Ctx.Provider>
   );
