@@ -30,7 +30,6 @@ interface TradingState {
   logs: string[];
 
   setCapital: (c: number) => void;
-  initCapital: (c: number) => void;
   resetCapital: () => void;
   openPosition: (
     asset: string, side: Side, entryPrice: number,
@@ -61,15 +60,10 @@ export const useTradingStore = create<TradingState>()(
       },
       logs: [],
 
-      // Update live capital without resetting startingCapital baseline
       setCapital: (c) => set((s) => ({
         capital: c,
-        // Only set startingCapital if it hasn't been initialized yet (still 0)
         startingCapital: s.startingCapital === 0 ? c : s.startingCapital,
       })),
-
-      // Explicitly set both capital and starting (used on login / mode switch)
-      initCapital: (c) => set({ capital: c, startingCapital: c }),
 
       resetCapital: () => {
         const sc = get().startingCapital;
