@@ -203,6 +203,14 @@ export function WalletTransfer({ onClose, defaultFrom, defaultTo }: Props) {
             ))}
           </div>
 
+          {/* Zero balance help */}
+          {bal('funding') <= 0 && bal('spot_live') <= 0 && (
+            <div className="rounded-xl bg-[#F59E0B]/08 border border-[#F59E0B]/20 px-3 py-2.5 space-y-1">
+              <p className="text-xs font-bold text-[#F59E0B]">No live funds detected</p>
+              <p className="text-[10px] text-[#F59E0B]/70">To trade live or send crypto, deposit SOL to your platform wallet first (Settings → Wallet → View Address). Mock wallets have $1,000 for practice.</p>
+            </div>
+          )}
+
           {/* Transfer */}
           {mode === 'transfer' && (<>
             <div><label className="text-[10px] text-[#4B5563] block mb-1 font-semibold uppercase">From</label><select value={from} onChange={e => setFrom(e.target.value as Wallet)} className="w-full bg-[#05060B] border border-white/[0.08] rounded-xl px-3 py-2.5 text-sm text-[#F4F6FA] outline-none">{WALLETS.map(w => <option key={w.id} value={w.id}>{w.label} — ${bal(w.id).toFixed(2)}</option>)}</select></div>
