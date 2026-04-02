@@ -106,7 +106,8 @@ function PressureBar({ token, candles }:{ token:Token|null; candles:Candle[] }) 
 
 // ── Order form (reusable for both desktop side panel and mobile bottom sheet)
 function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Token|null; livePrice:number; isMock:boolean; candles:Candle[]; onSuccess:()=>void }) {
-  const { user, account, saveAccount } = useAuth();
+  const { user, account, saveAccount, refreshBalance, liveSOLUSD } = useAuth();
+useEffect(() => { refreshBalance(); }, []);
   const { capital } = useTradingStore();
   const [side,setSide]       = useState<'buy'|'sell'>('buy');
   const [orderType,setOrderType] = useState<'market'|'limit'>('market');
