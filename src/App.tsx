@@ -580,13 +580,18 @@ export default function App() {
           <div className="ml-auto flex items-center gap-2">
             <PointsBadge/>
 
-            {user && account ? (
+            {user ? (
               <>
                 <button onClick={()=>setShowWallet(true)}
                   className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[#2BFFF1]/20 bg-[#2BFFF1]/05 hover:bg-[#2BFFF1]/10 transition-all">
-                  <div className={`w-2 h-2 rounded-full ${account.use_real ? 'bg-[#2BFFF1] shadow-[0_0_6px_#2BFFF1] animate-pulse' : 'bg-[#374151]'}`}/>
-                  <span className="text-xs font-semibold text-[#F4F6FA] max-w-[100px] truncate">{account.username || user.email?.split('@')[0]}</span>
-                  <span className="text-xs font-bold font-mono" style={{color:account.use_real?'#2BFFF1':'#6B7280'}}>{dispCapLabel}</span>
+                  <div className={`w-2 h-2 rounded-full ${account?.use_real ? 'bg-[#2BFFF1] shadow-[0_0_6px_#2BFFF1] animate-pulse' : 'bg-[#374151]'}`}/>
+                  <span className="text-xs font-semibold text-[#F4F6FA] max-w-[100px] truncate">{account?.username || user.email?.split('@')[0]}</span>
+                  <span className="text-xs font-bold font-mono" style={{color:account?.use_real?'#2BFFF1':'#6B7280'}}>{dispCapLabel}</span>
+                </button>
+                <button onClick={()=>setShowTransfer(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-white/[0.07] text-[#4B5563] hover:text-[#2BFFF1] hover:border-[#2BFFF1]/20 transition-all text-xs font-semibold">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+                  Transfer
                 </button>
                 <button onClick={()=>signOut()} className="text-[10px] px-2.5 py-1.5 rounded-xl border border-white/[0.07] text-[#4B5563] hover:text-[#A7B0B7] transition-all">Sign out</button>
               </>
