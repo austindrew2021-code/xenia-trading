@@ -122,7 +122,9 @@ useEffect(() => { refreshBalance(); }, []);
   const [confirmTrade, setConfirmTrade] = useState(false);
 
   // Mock uses mock_balance; live spot uses spot_live_balance (funded via Transfer → Spot Live)
-  const balance = account ? (isMock ? account.mock_balance : (account.spot_live_balance ?? account.real_balance)) : capital;
+  const liveSpotBal = account?.spot_live_balance ?? 0;
+  const liveFundingBal = liveSOLUSD > 0 ? liveSOLUSD : (account?.real_balance ?? 0);
+  const balance = account ? (isMock ? account.mock_balance : (liveSpotBal > 0 ? liveSpotBal : liveFundingBal)) : capital;
   const amtN = parseFloat(amountUsd)||0;
   const feeP = isMock ? MOCK_FEE : LIVE_FEE;
   const feeUsd = amtN * feeP;
