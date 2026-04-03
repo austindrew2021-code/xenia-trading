@@ -369,6 +369,15 @@ useEffect(() => { refreshBalance(); }, []);
         </div>
         <span className="font-mono font-bold text-[#F4F6FA]">${balance.toFixed(2)}</span>
       </div>
+      
+      {!isMock && balance <= 0 && (
+        <div className="rounded-xl bg-[#F59E0B]/08 border border-[#F59E0B]/20 px-3 py-2">
+          <p className="text-[10px] text-[#F59E0B] font-semibold">
+            No live balance. Deposit SOL to your platform wallet first (Settings → Wallet), 
+            or transfer from Funding → Spot Live using the Transfer button.
+          </p>
+        </div>
+      )}
 
       {/* Amount */}
       <div className="flex items-center gap-1.5 bg-[#05060B] border border-white/[0.08] rounded-xl px-2.5 py-2 focus-within:border-[#2BFFF1]/40 transition-all">
