@@ -11,6 +11,7 @@ interface DepositRecord { txHash: string; amountUsd: number; asset: string; chai
 export interface TradingAccount {
   id: string; user_id: string; username: string | null;
   mock_balance: number; real_balance: number; spot_live_balance: number;
+  spot_mock_balance: number; leverage_balance: number;
   bot_balance: number; bot_mock_balance: number; use_real: boolean;
   sol_address: string | null; evm_address: string | null;
   platform_wallet_address: string | null;
@@ -40,6 +41,8 @@ function useDebounce(fn: (...args: any[]) => void, ms: number) {
   const timer = useRef<ReturnType<typeof setTimeout>>();
   return useCallback((...args: any[]) => { clearTimeout(timer.current); timer.current = setTimeout(() => fn(...args), ms); }, [fn, ms]);
 }
+
+const PLATFORM_SOL_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -72,7 +75,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       for (const [k, v] of Object.entries(dw)) normalizedDW[k.toLowerCase()] = v as string;
       setAccount({
         ...data, platform_wallet_address: platformAddr, deposit_wallets: normalizedDW,
-        spot_live_balance: data.spot_live_balance ?? 0, bot_balance: data.bot_balance ?? 0,
+        spot_live_balance: data.spot_live_balance ?? 0, spot_mock_balance: data.spot_mock_balance ?? 1000,
+        leverage_balance: data.leverage_balance ?? 0, bot_balance: data.bot_balance ?? 0,
         bot_mock_balance: data.bot_mock_balance ?? 0, use_real: data.use_real ?? false,
         positions: data.positions ?? [], stats: data.stats ?? { totalPnl: 0, winCount: 0, lossCount: 0, tradeCount: 0 },
         monthly_points: data.monthly_points ?? {}, deposits: data.deposits ?? [],
@@ -94,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, [fetchAccount]);
 
-  // Realtime balance sync
+  // Realtime balance sync from DB changes (other tabs, edge functions, etc.)
   useEffect(() => {
     if (!supabase || !user) return;
     const channel = supabase.channel(`account:${user.id}`)
@@ -105,6 +109,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           mock_balance: d.mock_balance ?? prev.mock_balance,
           real_balance: d.real_balance ?? prev.real_balance,
           spot_live_balance: d.spot_live_balance ?? prev.spot_live_balance,
+          spot_mock_balance: d.spot_mock_balance ?? prev.spot_mock_balance,
+          leverage_balance: d.leverage_balance ?? prev.leverage_balance,
           bot_balance: d.bot_balance ?? prev.bot_balance,
           bot_mock_balance: d.bot_mock_balance ?? prev.bot_mock_balance,
           use_real: d.use_real ?? prev.use_real,
@@ -143,24 +149,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut(); setAccount(null);
   };
 
-  // Direct save — updates local state immediately, then persists to DB
+  // saveAccount: optimistic local update + immediate DB persist (not debounced)
   const saveAccount = useCallback(async (patch: Partial<TradingAccount>) => {
     if (!user || !supabase) return;
-    // Update local state FIRST (optimistic)
     setAccount(prev => prev ? { ...prev, ...patch } : prev);
-    // Then persist to DB
     try {
       await supabase.from('trading_accounts').update(patch).eq('user_id', user.id);
     } catch (e) {
-      console.error('saveAccount DB write failed:', e);
+      console.error('saveAccount failed:', e);
     }
   }, [user]);
 
-  // Refresh ONLY balance fields from DB — does NOT touch use_real to avoid race conditions
+  // refreshBalance: reads ALL balance fields + use_real from DB
   const refreshBalance = useCallback(async () => {
     if (!user || !supabase) return;
     const { data } = await supabase.from('trading_accounts')
-      .select('real_balance,mock_balance,spot_live_balance,bot_balance,bot_mock_balance')
+      .select('real_balance,mock_balance,spot_live_balance,spot_mock_balance,leverage_balance,bot_balance,bot_mock_balance,use_real')
       .eq('user_id', user.id).single();
     if (data) {
       setAccount(prev => prev ? {
@@ -168,9 +172,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         real_balance: data.real_balance ?? prev.real_balance,
         mock_balance: data.mock_balance ?? prev.mock_balance,
         spot_live_balance: data.spot_live_balance ?? prev.spot_live_balance,
+        spot_mock_balance: data.spot_mock_balance ?? prev.spot_mock_balance,
+        leverage_balance: data.leverage_balance ?? prev.leverage_balance,
         bot_balance: data.bot_balance ?? prev.bot_balance,
         bot_mock_balance: data.bot_mock_balance ?? prev.bot_mock_balance,
-        // NOTE: intentionally NOT overwriting use_real here to prevent race conditions
+        use_real: data.use_real ?? prev.use_real,
       } : prev);
     }
   }, [user]);
@@ -192,22 +198,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queue({ monthly_points: newMonthly, stats: newStats });
   }, [account, queue]);
 
-  const PLATFORM_SOL_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
-  const solDepositAddress: string = account?.platform_wallet_address || account?.deposit_wallets?.sol || account?.deposit_wallets?.SOL || PLATFORM_SOL_ADDRESS;
-  const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(solDepositAddress);
+  // ── On-chain balance monitoring ─────────────────────────────────────────
+  // ONLY monitor user's OWN deposit address — never the shared platform address.
+  // If no personal address exists, liveSOL/liveSOLUSD will be 0.
+  const userDepositAddress: string | null =
+    account?.platform_wallet_address ||
+    account?.deposit_wallets?.sol ||
+    account?.deposit_wallets?.SOL ||
+    null;
 
-  // Sync on-chain SOL → DB
-  const lastSyncedSOL = useRef(-1);
-  const initialSyncDone = useRef(false);
-  useEffect(() => { void (async () => {
-    if (!user || !supabase) return;
-    if (initialSyncDone.current && Math.abs(liveSOL - lastSyncedSOL.current) < 0.000001) return;
-    initialSyncDone.current = true; lastSyncedSOL.current = liveSOL;
-    const stored = account?.real_balance ?? 0;
-    if (Math.abs(liveSOLUSD - stored) < 0.01) return;
-    const { error } = await supabase.from('trading_accounts').update({ real_balance: liveSOLUSD }).eq('user_id', user.id);
-    if (!error) setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
-  })(); }, [liveSOL]);
+  const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(userDepositAddress ?? '');
+
+  // DEPOSIT DETECTION: only credit when on-chain > DB (new deposit arrived).
+  // NEVER overwrite DB balance downward — that would refund trade deductions.
+  // This matches how real exchanges work: Solana docs say "scan for deposits,
+  // credit internal balance, then internal balance is source of truth."
+  const lastCreditedUSD = useRef(0);
+  useEffect(() => {
+    if (!user || !supabase || !userDepositAddress) return;
+    if (liveSOLUSD <= 0) return;
+
+    const currentDB = account?.real_balance ?? 0;
+
+    // Only credit if on-chain is HIGHER than DB (new deposit)
+    if (liveSOLUSD > currentDB && liveSOLUSD !== lastCreditedUSD.current) {
+      lastCreditedUSD.current = liveSOLUSD;
+      const creditAmount = liveSOLUSD - currentDB;
+      console.log(`[Deposit detected] +$${creditAmount.toFixed(2)} (on-chain: $${liveSOLUSD.toFixed(2)}, DB: $${currentDB.toFixed(2)})`);
+
+      setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
+      supabase.from('trading_accounts')
+        .update({ real_balance: liveSOLUSD })
+        .eq('user_id', user.id)
+        .then(() => {});
+    }
+  }, [liveSOL, liveSOLUSD, user, userDepositAddress]);
 
   const connectWallet = useCallback((type: 'sol' | 'evm', address: string) => {
     queue(type === 'sol' ? { sol_address: address } : { evm_address: address });
