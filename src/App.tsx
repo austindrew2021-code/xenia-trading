@@ -133,7 +133,7 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: {
   const needsWarn = isHighLev && !warnAck;
 
   const liveCap = liveSOLUSD > 0 ? liveSOLUSD : (account?.real_balance ?? 0);
-  const cap = account ? (account.use_real ? liveCap : account.mock_balance) : capital;
+  const cap = account ? (account?.use_real liveCap : account.mock_balance) : capital;
 
   if (!account) return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 flex flex-col items-center gap-3">
@@ -146,7 +146,7 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: {
     const pos = openPosition(asset, side, livePrice, sizeN, levN, 'manual',
       tp ? parseFloat(tp) : undefined, sl ? parseFloat(sl) : undefined);
     if (pos) {
-      const modeLabel = account.use_real ? '🔴 LIVE' : '📌';
+      const modeLabel = account?.use_real '🔴 LIVE' : '📌';
       addLog(`${modeLabel} Manual ${side} ${asset} $${sizeN} ×${levN} @ $${livePrice.toFixed(4)}`);
 
       const isLive = account.use_real;
@@ -190,7 +190,7 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: {
   const submit = async () => {
     if (sizeN <= 0 || sizeN > cap) return;
     if (needsWarn) { setWarnAck(true); return; }
-    if (account.use_real && !confirmLive) { setConfirmLive(true); return; }
+    if (account?.use_real && !confirmLive) { setConfirmLive(true); return; }
     await executeTrade();
   };
 
@@ -204,8 +204,8 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: {
       {/* Header */}
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold text-[#A7B0B7] uppercase tracking-widest">Leverage Trade</p>
-        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${account.use_real ? 'text-[#2BFFF1] border-[#2BFFF1]/30 bg-[#2BFFF1]/10' : 'text-[#6B7280] border-white/[0.08]'}`}>
-          {account.use_real ? '🔴 LIVE' : 'MOCK'}
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${account?.use_real 'text-[#2BFFF1] border-[#2BFFF1]/30 bg-[#2BFFF1]/10' : 'text-[#6B7280] border-white/[0.08]'}`}>
+        {account?.use_real '🔴 LIVE' : 'MOCK'}
         </span>
       </div>
 
