@@ -14,7 +14,7 @@ export interface TradingAccount {
   spot_mock_balance: number; leverage_balance: number;
   bot_balance: number; bot_mock_balance: number; use_real: boolean;
   sol_address: string | null; evm_address: string | null;
-  platform_wallet_address: string | null;
+  platform_wallet_address: string | null; platform_sol_address: string | null;
   positions: Position[]; stats: AccountStats;
   monthly_points: Record<string, MonthPoints>;
   deposits: DepositRecord[]; deposit_wallets: Record<string, string>;
@@ -67,7 +67,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const fetchAccount = useCallback(async (uid: string) => {
     if (!supabase) return;
-    const { data } = await supabase.from('trading_accounts').select('*').eq('user_id', uid).single();
+    let { data } = await supabase.from('trading_accounts').select('*').eq('user_id', uid).single();
+    
+    // Auto-create if row doesn't exist (safety net)
+    if (!data) {
+      const { data: userData } = await supabase.auth.getUser();
+      const email = userData?.user?.email ?? '';
+      await supabase.from('trading_accounts').insert({
+        user_id: uid, username: email.split('@')[0],
+        mock_balance: 1000, real_balance: 0, funding_balance: 0,
+        spot_live_balance: 0, spot_mock_balance: 1000, leverage_balance: 0,
+        bot_balance: 0, bot_mock_balance: 0, use_real: false,
+        positions: [], stats: { totalPnl: 0, winCount: 0, lossCount: 0, tradeCount: 0 },
+        monthly_points: {}, deposits: [], deposit_wallets: { sol: null, evm: null },
+      });
+      const res = await supabase.from('trading_accounts').select('*').eq('user_id', uid).single();
+      data = res.data;
+    }
+    
     if (data) {
       const platformAddr = data.platform_wallet_address ?? data.platform_sol_address ?? null;
       const dw = data.deposit_wallets ?? {};
@@ -199,23 +216,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [account, queue]);
 
   // ── On-chain balance monitoring ─────────────────────────────────────────
-  // ONLY monitor user's OWN deposit address — never the shared platform address.
-  // If no personal address exists, liveSOL/liveSOLUSD will be 0.
-  const userDepositAddress: string | null =
+  // Monitor user's deposit address. Falls back to platform address for users
+  // who haven't generated a personal wallet yet (common during initial setup).
+  const userDepositAddress: string =
     account?.platform_wallet_address ||
+    account?.platform_sol_address ||
     account?.deposit_wallets?.sol ||
     account?.deposit_wallets?.SOL ||
-    null;
+    PLATFORM_SOL_ADDRESS;
 
-  const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(userDepositAddress ?? '');
+  const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(userDepositAddress);
 
   // DEPOSIT DETECTION: only credit when on-chain > DB (new deposit arrived).
   // NEVER overwrite DB balance downward — that would refund trade deductions.
-  // This matches how real exchanges work: Solana docs say "scan for deposits,
-  // credit internal balance, then internal balance is source of truth."
   const lastCreditedUSD = useRef(0);
   useEffect(() => {
-    if (!user || !supabase || !userDepositAddress) return;
+    if (!user || !supabase) return;
     if (liveSOLUSD <= 0) return;
 
     const currentDB = account?.real_balance ?? 0;
@@ -223,16 +239,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Only credit if on-chain is HIGHER than DB (new deposit)
     if (liveSOLUSD > currentDB && liveSOLUSD !== lastCreditedUSD.current) {
       lastCreditedUSD.current = liveSOLUSD;
-      const creditAmount = liveSOLUSD - currentDB;
-      console.log(`[Deposit detected] +$${creditAmount.toFixed(2)} (on-chain: $${liveSOLUSD.toFixed(2)}, DB: $${currentDB.toFixed(2)})`);
+      console.log(`[Deposit] +$${(liveSOLUSD - currentDB).toFixed(2)} credited (on-chain: $${liveSOLUSD.toFixed(2)})`);
 
       setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
       supabase.from('trading_accounts')
         .update({ real_balance: liveSOLUSD })
         .eq('user_id', user.id)
-        .then(() => {});
+        .then(({ error }) => { if (error) console.error('[Deposit write failed]', error); });
     }
-  }, [liveSOL, liveSOLUSD, user, userDepositAddress]);
+  }, [liveSOL, liveSOLUSD, user]);
 
   const connectWallet = useCallback((type: 'sol' | 'evm', address: string) => {
     queue(type === 'sol' ? { sol_address: address } : { evm_address: address });
