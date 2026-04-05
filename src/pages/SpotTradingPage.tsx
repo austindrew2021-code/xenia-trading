@@ -78,7 +78,6 @@ function TokenImg({src,symbol,size=28}:{src:string;symbol:string;size?:number}) 
   </div>;
 }
 
-// ── Inline pressure mini display ─────────────────────────────────────────
 function PressureBar({ token, candles }:{ token:Token|null; candles:Candle[] }) {
   const [buys,setBuys]=useState(0); const [sells,setSells]=useState(0);
   useEffect(()=>{
@@ -90,24 +89,17 @@ function PressureBar({ token, candles }:{ token:Token|null; candles:Candle[] }) 
   const total=buys+sells; const buyPct=Math.round(total>0?(buys/total)*100:candleBuyPct);
   return (
     <div className="flex flex-col gap-1 px-3 py-2 border-t border-white/[0.05]">
-      <div className="flex justify-between text-[9px] font-semibold">
-        <span className="text-green-400">Buy {buyPct}%</span>
-        <span className="text-[#4B5563]">Pressure (1h)</span>
-        <span className="text-red-400">Sell {100-buyPct}%</span>
-      </div>
-      <div className="h-1.5 rounded-full overflow-hidden flex">
-        <div className="h-full bg-green-500/70 transition-all duration-700" style={{width:`${buyPct}%`}}/>
-        <div className="h-full bg-red-500/60 flex-1"/>
-      </div>
+      <div className="flex justify-between text-[9px] font-semibold"><span className="text-green-400">Buy {buyPct}%</span><span className="text-[#4B5563]">Pressure (1h)</span><span className="text-red-400">Sell {100-buyPct}%</span></div>
+      <div className="h-1.5 rounded-full overflow-hidden flex"><div className="h-full bg-green-500/70 transition-all duration-700" style={{width:`${buyPct}%`}}/><div className="h-full bg-red-500/60 flex-1"/></div>
       {total>0&&<p className="text-[9px] text-[#374151] text-center">{buys} buys · {sells} sells this hour · DexScreener</p>}
     </div>
   );
 }
 
-// ── Order form (reusable for both desktop side panel and mobile bottom sheet)
+// ── Order form ───────────────────────────────────────────────────────────
 function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Token|null; livePrice:number; isMock:boolean; candles:Candle[]; onSuccess:()=>void }) {
   const { user, account, saveAccount, refreshBalance, liveSOLUSD } = useAuth();
-useEffect(() => { refreshBalance(); }, []);
+  useEffect(() => { refreshBalance(); }, []);
   const { capital } = useTradingStore();
   const [side,setSide]       = useState<'buy'|'sell'>('buy');
   const [orderType,setOrderType] = useState<'market'|'limit'>('market');
@@ -121,10 +113,16 @@ useEffect(() => { refreshBalance(); }, []);
   const [showAnim,setShowAnim] = useState<{side:'buy'|'sell';symbol:string;amount:string}|null>(null);
   const [confirmTrade, setConfirmTrade] = useState(false);
 
-  // Mock uses mock_balance; live spot uses spot_live_balance (funded via Transfer → Spot Live)
+  // Balance: DB is source of truth. For live, use spot_live first, then funding (real_balance).
+  // liveSOLUSD as safety net for newly detected deposits not yet synced to DB.
   const liveSpotBal = account?.spot_live_balance ?? 0;
   const liveFundingBal = liveSOLUSD > 0 ? liveSOLUSD : (account?.real_balance ?? 0);
-  const balance = account ? (isMock ? account.mock_balance : (liveSpotBal > 0 ? liveSpotBal : liveFundingBal)) : capital;
+  const balance = account
+    ? (isMock
+        ? account.mock_balance
+        : (liveSpotBal > 0 ? liveSpotBal : liveFundingBal))
+    : capital;
+
   const amtN = parseFloat(amountUsd)||0;
   const feeP = isMock ? MOCK_FEE : LIVE_FEE;
   const feeUsd = amtN * feeP;
@@ -157,10 +155,7 @@ useEffect(() => { refreshBalance(); }, []);
 
   const handleTradeClick = () => {
     if(orderType==='limit') { executeTrade(); return; }
-    if(!isMock && user && token && amtN > 0 && amtN <= balance) {
-      setConfirmTrade(true);
-      return;
-    }
+    if(!isMock && user && token && amtN > 0 && amtN <= balance) { setConfirmTrade(true); return; }
     executeTrade();
   };
 
@@ -180,55 +175,31 @@ useEffect(() => { refreshBalance(); }, []);
         try {
           const r = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
             method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
-            body:JSON.stringify({
-              action:'mock_trade', isMock:true,
-              inputMint:side==='buy'?USDC_MINT:token.mint,
-              outputMint:side==='buy'?token.mint:USDC_MINT,
-              amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name,
-              priceUsd:livePrice, side
-            }),
+            body:JSON.stringify({ action:'mock_trade', isMock:true, inputMint:side==='buy'?USDC_MINT:token.mint, outputMint:side==='buy'?token.mint:USDC_MINT, amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name, priceUsd:livePrice, side }),
           });
           const d = await r.json();
-          if(r.ok) {
-            mockSuccess = true;
-            if(d.new_mock_balance !== undefined) {
-              saveAccount({ mock_balance: d.new_mock_balance } as any);
-            }
-          }
+          if(r.ok) { mockSuccess = true; if(d.new_mock_balance !== undefined) saveAccount({ mock_balance: d.new_mock_balance } as any); }
         } catch {}
-        // Fallback: direct DB update if edge function failed
+        // Fallback: direct DB update
         if(!mockSuccess && supabase && user) {
           const fee = amtN * MOCK_FEE;
           const newBal = side==='buy' ? (account?.mock_balance??0) - amtN - fee : (account?.mock_balance??0) + amtN - fee;
           if(newBal < 0) throw new Error('Insufficient mock balance');
-          const tokenAmount = side==='buy' ? amtN/livePrice : amtN/livePrice;
+          const tokenAmount = amtN/livePrice;
           await Promise.all([
             supabase.from('trading_accounts').update({ mock_balance: Math.max(0, newBal) }).eq('user_id', user.id),
-            supabase.from('spot_trades').insert({
-              user_id:user.id, token_mint:token.mint, token_symbol:token.symbol, token_name:token.name,
-              side, amount_token:tokenAmount, amount_usd:amtN, price_usd:livePrice, fee_usd:fee, is_mock:true, status:'filled',
-            }),
+            supabase.from('spot_trades').insert({ user_id:user.id, token_mint:token.mint, token_symbol:token.symbol, token_name:token.name, side, amount_token:tokenAmount, amount_usd:amtN, price_usd:livePrice, fee_usd:fee, is_mock:true, status:'filled' }),
             side==='buy'
-              ? supabase.from('spot_holdings').upsert({
-                  user_id:user.id, token_mint:token.mint, token_symbol:token.symbol, token_name:token.name,
-                  amount:tokenAmount, avg_cost:livePrice, is_mock:true, updated_at:new Date().toISOString(),
-                }, { onConflict:'user_id,token_mint,is_mock' })
-              : supabase.from('spot_holdings')
-                  .select('amount')
-                  .eq('user_id',user.id).eq('token_mint',token.mint).eq('is_mock',true).single()
-                  .then(({data:h})=>{
-                    if(!h) return;
-                    const remaining=Math.max(0,(h.amount||0)-tokenAmount);
-                    return remaining > 0
-                      ? supabase!.from('spot_holdings').update({amount:remaining,updated_at:new Date().toISOString()}).eq('user_id',user.id).eq('token_mint',token.mint).eq('is_mock',true)
-                      : supabase!.from('spot_holdings').delete().eq('user_id',user.id).eq('token_mint',token.mint).eq('is_mock',true);
-                  }),
+              ? supabase.from('spot_holdings').upsert({ user_id:user.id, token_mint:token.mint, token_symbol:token.symbol, token_name:token.name, amount:tokenAmount, avg_cost:livePrice, is_mock:true, updated_at:new Date().toISOString() }, { onConflict:'user_id,token_mint,is_mock' })
+              : supabase.from('spot_holdings').select('amount').eq('user_id',user.id).eq('token_mint',token.mint).eq('is_mock',true).single().then(({data:h})=>{
+                  if(!h) return; const remaining=Math.max(0,(h.amount||0)-tokenAmount);
+                  return remaining > 0
+                    ? supabase!.from('spot_holdings').update({amount:remaining,updated_at:new Date().toISOString()}).eq('user_id',user.id).eq('token_mint',token.mint).eq('is_mock',true)
+                    : supabase!.from('spot_holdings').delete().eq('user_id',user.id).eq('token_mint',token.mint).eq('is_mock',true);
+                }),
           ]);
           saveAccount({ mock_balance: Math.max(0, newBal) } as any);
-        } else if(!mockSuccess) {
-          throw new Error('Mock trade failed');
-        }
-        // Refresh balance from DB
+        } else if(!mockSuccess) { throw new Error('Mock trade failed'); }
         if(supabase && user && mockSuccess) {
           const { data: freshAcct } = await supabase.from('trading_accounts').select('mock_balance').eq('user_id', user.id).single();
           if(freshAcct) saveAccount({ mock_balance: freshAcct.mock_balance } as any);
@@ -236,16 +207,11 @@ useEffect(() => { refreshBalance(); }, []);
         setStatus({type:'success',msg:`Mock ${side==='buy'?'bought':'sold'} ${tokOut.toFixed(4)} ${token.symbol}`});
 
       } else {
-        // ── Live trade: try platform wallet first, then external wallet ──
-        // Platform wallet = user's internal balance, server-side execution
+        // ── Live trade: platform wallet first, then external wallet fallback ──
         setStatus({type:'success',msg:'Executing via platform wallet…'});
-        const platResult = await platformWalletTrade({
-          authToken, isMock: false, side, amountUsd: amtN,
-          tokenMint: token.mint, tokenSymbol: token.symbol, tokenName: token.name, priceUsd: livePrice,
-        });
+        const platResult = await platformWalletTrade({ authToken, isMock: false, side, amountUsd: amtN, tokenMint: token.mint, tokenSymbol: token.symbol, tokenName: token.name, priceUsd: livePrice });
         if (platResult.success) {
           setStatus({type:'success',msg:platResult.message ?? 'Trade executed via platform wallet'});
-          // Refresh balance from DB
           if(supabase && user) {
             const { data: freshAcct } = await supabase.from('trading_accounts').select('real_balance,mock_balance,spot_live_balance').eq('user_id', user.id).single();
             if(freshAcct) saveAccount({ real_balance: freshAcct.real_balance, mock_balance: freshAcct.mock_balance, spot_live_balance: freshAcct.spot_live_balance ?? 0 } as any);
@@ -253,8 +219,7 @@ useEffect(() => { refreshBalance(); }, []);
           setAmt(''); setPct(0); onSuccess();
           setExec(false); return;
         }
-        // Platform wallet not available (no funds/wallet) — fall back to Phantom
-        // Give a helpful error if the account/balance issue is server-side
+        // Platform wallet failed — fall back to Phantom/Solflare
         const platErr = platResult.error ?? '';
         const phantom = (window as any).solana ?? (window as any).solflare;
         if(!phantom) throw new Error(
@@ -262,13 +227,10 @@ useEffect(() => { refreshBalance(); }, []);
             ? `Insufficient Spot Live balance. Transfer funds from Funding wallet first.`
             : platErr || 'No Solana wallet found. Fund your Spot Live wallet or install Phantom.'
         );
-        if(!phantom.isConnected) {
-          try { await phantom.connect(); } catch(ce:any) { throw new Error('Wallet connection cancelled'); }
-        }
+        if(!phantom.isConnected) { try { await phantom.connect(); } catch { throw new Error('Wallet connection cancelled'); } }
         const userWallet = phantom.publicKey?.toBase58?.();
         if(!userWallet) throw new Error('No wallet connected');
 
-        // Step 1: Get Jupiter quote
         setStatus({type:'success',msg:'Getting Jupiter quote…'});
         const qRes = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
           method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
@@ -277,7 +239,6 @@ useEffect(() => { refreshBalance(); }, []);
         const { quote, error:qErr } = await qRes.json();
         if(qErr||!quote) throw new Error(qErr ?? 'Quote failed');
 
-        // Step 2: Build swap transaction
         setStatus({type:'success',msg:'Building transaction…'});
         const swapRes = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
           method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
@@ -286,37 +247,25 @@ useEffect(() => { refreshBalance(); }, []);
         const { swapTransaction, tradeId, error:swErr } = await swapRes.json();
         if(swErr||!swapTransaction) throw new Error(swErr ?? 'Swap build failed');
 
-        // Step 3: Sign with wallet
         setStatus({type:'success',msg:'Sign in your wallet…'});
         let txBuf: Buffer;
         try { txBuf = Buffer.from(swapTransaction, 'base64'); } catch { throw new Error('Invalid transaction data'); }
-        
-        // Try VersionedTransaction first, fall back to legacy
         let tx: any;
-        try {
-          const { VersionedTransaction } = await import('@solana/web3.js') as any;
-          tx = VersionedTransaction.deserialize(txBuf);
-        } catch {
-          const { Transaction } = await import('@solana/web3.js') as any;
-          tx = Transaction.from(txBuf);
-        }
+        try { const { VersionedTransaction } = await import('@solana/web3.js') as any; tx = VersionedTransaction.deserialize(txBuf); }
+        catch { const { Transaction } = await import('@solana/web3.js') as any; tx = Transaction.from(txBuf); }
         const signed = await phantom.signTransaction(tx);
 
-        // Step 4: Send to network
         setStatus({type:'success',msg:'Broadcasting…'});
         const { Connection } = await import('@solana/web3.js') as any;
         const conn = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
         const txHash = await conn.sendRawTransaction(signed.serialize(), { skipPreflight:false, preflightCommitment:'confirmed' });
-        
         setStatus({type:'success',msg:'Confirming on-chain…'});
         await conn.confirmTransaction(txHash, 'confirmed');
 
-        // Step 5: Confirm with backend
         await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
           method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
           body:JSON.stringify({ action:'confirm', tradeId, txHash, outputMint:token.mint, tokenSymbol:token.symbol, tokenName:token.name, amountUsd:amtN, priceUsd:livePrice, tokenAmount:tokOut }),
         });
-
         setStatus({type:'success',msg:`Live buy confirmed! ${txHash.slice(0,8)}…`});
       }
       setShowAnim({ side, symbol: token.symbol, amount: `$${amtN.toFixed(2)}` });
@@ -336,23 +285,12 @@ useEffect(() => { refreshBalance(); }, []);
     <>
     {showAnim && <TradeAnimation side={showAnim.side} symbol={showAnim.symbol} amount={showAnim.amount} onDone={()=>{ setShowAnim(null); onSuccess(); }}/>}
     <div className="flex flex-col gap-2.5 p-3">
-      {/* Buy / Sell */}
       <div className="flex rounded-xl overflow-hidden border border-white/[0.07]">
-        {(['buy','sell'] as const).map(s=>(
-          <button key={s} onClick={()=>setSide(s)} className={`flex-1 py-2.5 text-xs font-black transition-all ${side===s?s==='buy'?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>
-            {s==='buy'?'Buy':'Sell'} {token.symbol}
-          </button>
-        ))}
+        {(['buy','sell'] as const).map(s=>(<button key={s} onClick={()=>setSide(s)} className={`flex-1 py-2.5 text-xs font-black transition-all ${side===s?s==='buy'?'bg-green-500/20 text-green-400':'bg-red-500/20 text-red-400':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{s==='buy'?'Buy':'Sell'} {token.symbol}</button>))}
       </div>
-
-      {/* Order type toggle */}
       <div className="flex rounded-lg overflow-hidden border border-white/[0.06] text-[10px] font-bold">
-        {(['market','limit'] as const).map(t=>(
-          <button key={t} onClick={()=>setOrderType(t)} className={`flex-1 py-1.5 capitalize transition-all ${orderType===t?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{t}</button>
-        ))}
+        {(['market','limit'] as const).map(t=>(<button key={t} onClick={()=>setOrderType(t)} className={`flex-1 py-1.5 capitalize transition-all ${orderType===t?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{t}</button>))}
       </div>
-
-      {/* Limit price input */}
       {orderType==='limit'&&(
         <div className="flex items-center gap-1.5 bg-[#05060B] border border-[#2BFFF1]/25 rounded-xl px-2.5 py-2 focus-within:border-[#2BFFF1]/50 transition-all">
           <span className="text-[#2BFFF1]/60 text-[10px] font-semibold whitespace-nowrap">Limit $</span>
@@ -360,8 +298,6 @@ useEffect(() => { refreshBalance(); }, []);
           {livePrice>0&&<button onClick={()=>setLimitPrice(livePrice.toFixed(6))} className="text-[8px] text-[#2BFFF1]/50 hover:text-[#2BFFF1] border border-[#2BFFF1]/20 rounded px-1 py-0.5">Now</button>}
         </div>
       )}
-
-      {/* Balance */}
       <div className="flex justify-between text-[10px] px-0.5">
         <div className="flex items-center gap-1">
           <span className="text-[#4B5563]">Available ({isMock?'Mock':'Live'})</span>
@@ -369,47 +305,24 @@ useEffect(() => { refreshBalance(); }, []);
         </div>
         <span className="font-mono font-bold text-[#F4F6FA]">${balance.toFixed(2)}</span>
       </div>
-      
       {!isMock && balance <= 0 && (
         <div className="rounded-xl bg-[#F59E0B]/08 border border-[#F59E0B]/20 px-3 py-2">
-          <p className="text-[10px] text-[#F59E0B] font-semibold">
-            No live balance. Deposit SOL to your platform wallet first (Settings → Wallet), 
-            or transfer from Funding → Spot Live using the Transfer button.
-          </p>
+          <p className="text-[10px] text-[#F59E0B] font-semibold">No live balance. Deposit SOL to your platform wallet first (Settings → Wallet), or transfer from Funding → Spot Live using the Transfer button.</p>
         </div>
       )}
-
-      {/* Amount */}
       <div className="flex items-center gap-1.5 bg-[#05060B] border border-white/[0.08] rounded-xl px-2.5 py-2 focus-within:border-[#2BFFF1]/40 transition-all">
         <span className="text-[#374151] text-xs">$</span>
         <input type="number" value={amountUsd} onChange={e=>{setAmt(e.target.value);setPct(0);}} placeholder="0.00" className="flex-1 bg-transparent text-xs font-mono text-[#F4F6FA] outline-none" style={{minWidth:0}}/>
       </div>
-
-      {/* % slider */}
       <div className="space-y-1.5">
-        <input type="range" min={0} max={100} step={5} value={amountPct} onChange={e=>setPct(parseInt(e.target.value))}
-          className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
-          style={{accentColor:side==='buy'?'#4ADE80':'#F87171',background:`linear-gradient(to right,${side==='buy'?'#4ADE80':'#F87171'} ${amountPct}%,#1a2030 ${amountPct}%)`}}/>
-        <div className="flex gap-1">
-          {[25,50,75,100].map(p=>(
-            <button key={p} onClick={()=>setPct(p)} className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${amountPct===p?(side==='buy'?'bg-green-500/20 text-green-400 border border-green-500/25':'bg-red-500/20 text-red-400 border border-red-500/25'):'bg-white/[0.04] text-[#4B5563] border border-white/[0.06] hover:text-[#A7B0B7]'}`}>{p}%</button>
-          ))}
-        </div>
+        <input type="range" min={0} max={100} step={5} value={amountPct} onChange={e=>setPct(parseInt(e.target.value))} className="w-full h-1.5 rounded-full appearance-none cursor-pointer" style={{accentColor:side==='buy'?'#4ADE80':'#F87171',background:`linear-gradient(to right,${side==='buy'?'#4ADE80':'#F87171'} ${amountPct}%,#1a2030 ${amountPct}%)`}}/>
+        <div className="flex gap-1">{[25,50,75,100].map(p=>(<button key={p} onClick={()=>setPct(p)} className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${amountPct===p?(side==='buy'?'bg-green-500/20 text-green-400 border border-green-500/25':'bg-red-500/20 text-red-400 border border-red-500/25'):'bg-white/[0.04] text-[#4B5563] border border-white/[0.06] hover:text-[#A7B0B7]'}`}>{p}%</button>))}</div>
       </div>
-
-      {/* TP / SL */}
       <div className="grid grid-cols-2 gap-1.5">
         {[['TP',tp,setTp,'#4ADE80'],['SL',sl,setSl,'#F87171']].map(([label,val,setter,color]:any)=>(
-          <div key={label}>
-            <label className="text-[9px] mb-0.5 block font-semibold" style={{color}}>{label === 'TP' ? 'Take Profit' : 'Stop Loss'}</label>
-            <input type="number" value={val} onChange={e=>setter(e.target.value)} placeholder="Optional"
-              className="w-full bg-[#05060B] rounded-lg px-2 py-1.5 text-[10px] text-[#F4F6FA] outline-none font-mono"
-              style={{border:`1px solid ${val?color+'40':'rgba(255,255,255,0.06)'}`,transition:'border-color 0.2s'}}/>
-          </div>
+          <div key={label}><label className="text-[9px] mb-0.5 block font-semibold" style={{color}}>{label==='TP'?'Take Profit':'Stop Loss'}</label><input type="number" value={val} onChange={e=>setter(e.target.value)} placeholder="Optional" className="w-full bg-[#05060B] rounded-lg px-2 py-1.5 text-[10px] text-[#F4F6FA] outline-none font-mono" style={{border:`1px solid ${val?color+'40':'rgba(255,255,255,0.06)'}`,transition:'border-color 0.2s'}}/></div>
         ))}
       </div>
-
-      {/* Summary */}
       {amtN>0&&livePrice>0&&(
         <div className="rounded-xl bg-[#05060B] border border-white/[0.05] px-2.5 py-2 space-y-1">
           <div className="flex justify-between text-[9px]"><span className="text-[#4B5563]">Receive</span><span className="font-mono text-[#A7B0B7]">{tokOut.toFixed(4)} {token.symbol}</span></div>
@@ -417,37 +330,17 @@ useEffect(() => { refreshBalance(); }, []);
           <div className="flex justify-between text-[9px] font-bold pt-0.5 border-t border-white/[0.04]"><span className="text-[#4B5563]">Total</span><span className="text-[#F4F6FA]">${netUsd.toFixed(2)}</span></div>
         </div>
       )}
-
-      {txStatus&&(
-        <div className={`rounded-xl px-2.5 py-2 text-[10px] font-semibold ${txStatus.type==='success'?'bg-green-500/08 text-green-400 border border-green-500/15':'bg-red-500/08 text-red-400 border border-red-500/15'}`}>
-          {txStatus.msg}
-        </div>
-      )}
-
-      {/* Live trade confirmation dialog */}
+      {txStatus&&(<div className={`rounded-xl px-2.5 py-2 text-[10px] font-semibold ${txStatus.type==='success'?'bg-green-500/08 text-green-400 border border-green-500/15':'bg-red-500/08 text-red-400 border border-red-500/15'}`}>{txStatus.msg}</div>)}
       {confirmTrade&&!isMock&&token&&(
         <div className="rounded-xl border border-[#F59E0B]/30 bg-[#F59E0B]/08 p-3 space-y-2">
           <p className="text-xs font-bold text-[#F59E0B]">Confirm Live Trade</p>
-          <div className="text-[10px] text-[#A7B0B7] space-y-1">
-            <p><strong className="text-[#F4F6FA]">{side==='buy'?'Buy':'Sell'} {tokOut.toFixed(4)} {token.symbol}</strong> for <strong className="text-[#F4F6FA]">${amtN.toFixed(2)}</strong></p>
-            <p>Price: {fmtP(livePrice)} · Fee: ${feeUsd.toFixed(4)}</p>
-          </div>
-          <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-2 py-1.5">
-            <p className="text-[9px] text-red-400 font-semibold">This will execute a real trade with real funds. Market orders execute immediately at current price. You may lose money.</p>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={()=>setConfirmTrade(false)} className="flex-1 py-2 rounded-xl border border-white/[0.08] text-xs font-bold text-[#A7B0B7] hover:text-[#F4F6FA]">Cancel</button>
-            <button onClick={executeTrade}
-              className={`flex-1 py-2 rounded-xl text-xs font-bold border ${side==='buy'?'bg-green-500/20 text-green-400 border-green-500/30':'bg-red-500/20 text-red-400 border-red-500/30'}`}>
-              Confirm {side==='buy'?'Buy':'Sell'}
-            </button>
-          </div>
+          <div className="text-[10px] text-[#A7B0B7] space-y-1"><p><strong className="text-[#F4F6FA]">{side==='buy'?'Buy':'Sell'} {tokOut.toFixed(4)} {token.symbol}</strong> for <strong className="text-[#F4F6FA]">${amtN.toFixed(2)}</strong></p><p>Price: {fmtP(livePrice)} · Fee: ${feeUsd.toFixed(4)}</p></div>
+          <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-2 py-1.5"><p className="text-[9px] text-red-400 font-semibold">Real trade with real funds. Market orders execute immediately. You may lose money.</p></div>
+          <div className="flex gap-2"><button onClick={()=>setConfirmTrade(false)} className="flex-1 py-2 rounded-xl border border-white/[0.08] text-xs font-bold text-[#A7B0B7] hover:text-[#F4F6FA]">Cancel</button><button onClick={executeTrade} className={`flex-1 py-2 rounded-xl text-xs font-bold border ${side==='buy'?'bg-green-500/20 text-green-400 border-green-500/30':'bg-red-500/20 text-red-400 border-red-500/30'}`}>Confirm {side==='buy'?'Buy':'Sell'}</button></div>
         </div>
       )}
-
       {!confirmTrade&&(
-        <button onClick={handleTradeClick} disabled={executing||!user||amtN<=0||amtN>balance||(orderType==='limit'&&(!limitPrice||parseFloat(limitPrice)<=0))}
-          className={`w-full py-3 rounded-xl text-sm font-black transition-all disabled:opacity-40 ${side==='buy'?'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30':'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'}`}>
+        <button onClick={handleTradeClick} disabled={executing||!user||amtN<=0||amtN>balance||(orderType==='limit'&&(!limitPrice||parseFloat(limitPrice)<=0))} className={`w-full py-3 rounded-xl text-sm font-black transition-all disabled:opacity-40 ${side==='buy'?'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30':'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'}`}>
           {executing?<span className="flex items-center justify-center gap-1.5"><div className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin"/>{orderType==='limit'?'Placing…':isMock?'Simulating…':'Sending…'}</span>
             :!user?'Sign in to trade'
             :orderType==='limit'?`Place Limit ${side==='buy'?'Buy':'Sell'}`
@@ -464,41 +357,37 @@ interface Props { isMock:boolean; onToggleMock:()=>void; }
 
 export function SpotTradingPage({ isMock, onToggleMock }:Props) {
   const { user } = useAuth();
-
-  const [searchQ,      setSearchQ]      = useState('');
-  const [searchRes,    setSearchRes]    = useState<Token[]>([]);
-  const [searching,    setSearching]    = useState(false);
-  const [token,        setToken]        = useState<Token|null>(null);
-  const [livePrice,    setLivePrice]    = useState(0);
-  const [candles,      setCandles]      = useState<Candle[]>([]);
-  const [interval,     setInterval_]    = useState('15m');
+  const [searchQ, setSearchQ] = useState('');
+  const [searchRes, setSearchRes] = useState<Token[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [token, setToken] = useState<Token|null>(null);
+  const [livePrice, setLivePrice] = useState(0);
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const [interval, setInterval_] = useState('15m');
   const [loadingChart, setLoadingChart] = useState(false);
-  const [tab,          setTab]          = useState<'chart'|'portfolio'|'history'>('chart');
-  const [holdings,     setHoldings]     = useState<Holding[]>([]);
-  const [trades,       setTrades]       = useState<Trade[]>([]);
-  const [loadingPort,  setLoadingPort]  = useState(false);
-  const [showOrderForm,setShowOrder]    = useState(false); // mobile bottom sheet
+  const [tab, setTab] = useState<'chart'|'portfolio'|'history'>('chart');
+  const [holdings, setHoldings] = useState<Holding[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [loadingPort, setLoadingPort] = useState(false);
+  const [showOrderForm, setShowOrder] = useState(false);
 
   const searchTimer = useRef<ReturnType<typeof setTimeout>>();
-  const priceTimer  = useRef<ReturnType<typeof setInterval>>();
+  const priceTimer = useRef<ReturnType<typeof setInterval>>();
 
-  // Search
   useEffect(()=>{
     if(!searchQ.trim()){setSearchRes([]);return;}
     clearTimeout(searchTimer.current); setSearching(true);
     searchTimer.current=setTimeout(async()=>{ const r=await searchTokens(searchQ); setSearchRes(r); setSearching(false); },350);
   },[searchQ]);
 
-  // Price
   useEffect(()=>{
-    if(!token){return;}
+    if(!token) return;
     setLivePrice(token.priceUsd);
     clearInterval(priceTimer.current);
     priceTimer.current=setInterval(async()=>{ try{const r=await fetch(`https://api.dexscreener.com/latest/dex/tokens/${token.mint}`);const d=await r.json();const p=parseFloat(d.pairs?.[0]?.priceUsd??'0');if(p>0)setLivePrice(p);}catch{} },3_000);
     return()=>clearInterval(priceTimer.current);
   },[token?.mint]);
 
-  // Candles
   useEffect(()=>{
     if(!token?.pairAddress){setCandles([]);return;}
     setLoadingChart(true); setCandles([]);
@@ -524,17 +413,12 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
   useEffect(()=>{ if(tab==='portfolio'||tab==='history') loadPortfolio(); },[tab,loadPortfolio]);
 
   const selectToken = (t:Token) => { setToken(t); setSearchQ(''); setSearchRes([]); setTab('chart'); };
-
-  const TabBtn = ({id,label}:{id:typeof tab;label:string}) => (
-    <button onClick={()=>setTab(id)} className={`flex-1 py-2 text-[11px] font-semibold transition-all ${tab===id?'text-[#2BFFF1] border-b-2 border-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{label}</button>
-  );
+  const TabBtn = ({id,label}:{id:typeof tab;label:string}) => (<button onClick={()=>setTab(id)} className={`flex-1 py-2 text-[11px] font-semibold transition-all ${tab===id?'text-[#2BFFF1] border-b-2 border-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{label}</button>);
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#05060B]">
-
-      {/* ── Top bar ─────────────────────────────────────────────── */}
+      {/* Top bar */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06] flex-shrink-0">
-        {/* Search */}
         <div className="relative flex-1 min-w-0">
           <div className="flex items-center gap-2 bg-[#0B0E14] border border-white/[0.08] rounded-xl px-2.5 py-2 focus-within:border-[#2BFFF1]/40 transition-all">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="2" className="flex-shrink-0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -546,160 +430,70 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
             <div className="absolute top-full left-0 right-0 mt-1 bg-[#0B0E14] border border-white/[0.1] rounded-2xl shadow-2xl z-[200] overflow-hidden max-h-52 overflow-y-auto">
               {searchRes.map(t=>(
                 <button key={t.mint} onClick={()=>selectToken(t)} className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/[0.04] transition-all text-left">
-                  <TokenImg src={t.logoUri} symbol={t.symbol} size={28}/>
-                  <div className="flex-1 min-w-0"><p className="text-xs font-bold text-[#F4F6FA]">{t.symbol}</p><p className="text-[9px] text-[#374151] truncate">{t.name}</p></div>
-                  <div className="text-right flex-shrink-0"><p className="text-xs font-mono text-[#A7B0B7]">{fmtP(t.priceUsd)}</p><p className={`text-[9px] ${t.change24h>=0?'text-green-400':'text-red-400'}`}>{t.change24h>=0?'+':''}{t.change24h.toFixed(2)}%</p></div>
+                  <TokenImg src={t.logoUri} symbol={t.symbol} size={28}/><div className="flex-1 min-w-0"><p className="text-xs font-bold text-[#F4F6FA]">{t.symbol}</p><p className="text-[9px] text-[#374151] truncate">{t.name}</p></div><div className="text-right flex-shrink-0"><p className="text-xs font-mono text-[#A7B0B7]">{fmtP(t.priceUsd)}</p><p className={`text-[9px] ${t.change24h>=0?'text-green-400':'text-red-400'}`}>{t.change24h>=0?'+':''}{t.change24h.toFixed(2)}%</p></div>
                 </button>
               ))}
             </div>
           )}
         </div>
         <button onClick={onToggleMock} className={`flex items-center gap-1 px-2 py-1.5 rounded-xl border text-[11px] font-black transition-all flex-shrink-0 ${isMock?'border-white/[0.1] bg-white/[0.03] text-[#6B7280]':'border-[#2BFFF1]/50 bg-[#2BFFF1]/15 text-[#2BFFF1]'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isMock?'bg-[#374151]':'bg-[#2BFFF1] animate-pulse'}`}/>
-          {isMock?'Mock':'Live'}
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isMock?'bg-[#374151]':'bg-[#2BFFF1] animate-pulse'}`}/>{isMock?'Mock':'Live'}
         </button>
       </div>
 
-      {/* ── Token info strip ─────────────────────────────────────── */}
       {token&&(
         <div className="flex flex-col border-b border-white/[0.05] flex-shrink-0 bg-[#080A10]">
-          {/* Row 1: symbol + price + change */}
-          <div className="flex items-center gap-2 px-3 pt-1.5 pb-1">
-            <TokenImg src={token.logoUri} symbol={token.symbol} size={20}/>
-            <span className="text-sm font-black text-[#F4F6FA]">{token.symbol}</span>
-            <span className="text-sm font-black font-mono text-[#F4F6FA] ml-auto">{fmtP(livePrice)}</span>
-            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${token.change24h>=0?'text-green-400 bg-green-500/10':'text-red-400 bg-red-500/10'}`}>
-              {token.change24h>=0?'+':''}{token.change24h.toFixed(2)}%
-            </span>
-          </div>
-          {/* Row 2: interval buttons */}
-          <div className="flex gap-0.5 px-3 pb-1.5 overflow-x-auto">
-            {INTERVALS.map(i=>(
-              <button key={i} onClick={()=>setInterval_(i)} className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all flex-shrink-0 ${interval===i?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#374151] hover:text-[#6B7280]'}`}>{i}</button>
-            ))}
-          </div>
+          <div className="flex items-center gap-2 px-3 pt-1.5 pb-1"><TokenImg src={token.logoUri} symbol={token.symbol} size={20}/><span className="text-sm font-black text-[#F4F6FA]">{token.symbol}</span><span className="text-sm font-black font-mono text-[#F4F6FA] ml-auto">{fmtP(livePrice)}</span><span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${token.change24h>=0?'text-green-400 bg-green-500/10':'text-red-400 bg-red-500/10'}`}>{token.change24h>=0?'+':''}{token.change24h.toFixed(2)}%</span></div>
+          <div className="flex gap-0.5 px-3 pb-1.5 overflow-x-auto">{INTERVALS.map(i=>(<button key={i} onClick={()=>setInterval_(i)} className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all flex-shrink-0 ${interval===i?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#374151] hover:text-[#6B7280]'}`}>{i}</button>))}</div>
         </div>
       )}
 
-      {/* ── Tabs ─────────────────────────────────────────────────── */}
-      <div className="flex border-b border-white/[0.05] flex-shrink-0">
-        <TabBtn id="chart" label="Trade"/>
-        <TabBtn id="portfolio" label="Portfolio"/>
-        <TabBtn id="history" label="History"/>
-      </div>
+      <div className="flex border-b border-white/[0.05] flex-shrink-0"><TabBtn id="chart" label="Trade"/><TabBtn id="portfolio" label="Portfolio"/><TabBtn id="history" label="History"/></div>
 
-      {/* ══════════ CHART / TRADE TAB ══════════════════════════════ */}
       {tab==='chart'&&(
-        // On md+: side-by-side chart + order form. On mobile: chart full width + floating Buy button
         <div className="flex-1 flex overflow-y-auto md:overflow-hidden min-h-0">
-
-          {/* Chart area — fixed height on mobile, flex-1 on desktop */}
           <div className="flex flex-col min-w-0" style={{flex:1,minHeight:0,overflow:'hidden'}}>
-            {token?(
-              <>
-                <div className="flex-shrink-0 md:flex-1 md:min-h-0" style={{height:'300px',overflow:'hidden'}}
-                  onTouchStart={e=>e.stopPropagation()}>
-                  {loadingChart&&candles.length===0
-                    ?<div className="h-full flex items-center justify-center gap-2 text-[#4B5563] text-xs"><div className="w-4 h-4 border-2 border-[#2BFFF1]/20 border-t-[#2BFFF1] rounded-full animate-spin"/>Loading…</div>
-                    :<PriceChart candles={candles} livePrice={livePrice} positions={[]} interval={interval} onIntervalChange={setInterval_}/>}
-                </div>
-                <div className="flex-shrink-0 max-h-20 overflow-hidden">
-                  <PressureBar token={token} candles={candles}/>
-                </div>
-              </>
-            ):(
-              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-                <svg className="opacity-15 mb-4" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="1.2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                <p className="text-sm font-semibold text-[#4B5563]">Search any Solana token</p>
-                <p className="text-[10px] text-[#374151] mt-1">Pump.fun · Raydium · Jupiter · $30k+ MCap</p>
+            {token?(<>
+              <div className="flex-shrink-0 md:flex-1 md:min-h-0" style={{height:'300px',overflow:'hidden'}} onTouchStart={e=>e.stopPropagation()}>
+                {loadingChart&&candles.length===0?<div className="h-full flex items-center justify-center gap-2 text-[#4B5563] text-xs"><div className="w-4 h-4 border-2 border-[#2BFFF1]/20 border-t-[#2BFFF1] rounded-full animate-spin"/>Loading…</div>
+                :<PriceChart candles={candles} livePrice={livePrice} positions={[]} interval={interval} onIntervalChange={setInterval_}/>}
               </div>
+              <div className="flex-shrink-0 max-h-20 overflow-hidden"><PressureBar token={token} candles={candles}/></div>
+            </>):(
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center"><svg className="opacity-15 mb-4" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="1.2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><p className="text-sm font-semibold text-[#4B5563]">Search any Solana token</p><p className="text-[10px] text-[#374151] mt-1">Pump.fun · Raydium · Jupiter · $30k+ MCap</p></div>
             )}
           </div>
-
-          {/* Desktop order panel */}
-          <div className="hidden md:flex w-[240px] lg:w-[260px] flex-shrink-0 border-l border-white/[0.06] flex-col overflow-y-auto bg-[#080A10]">
-            <BotPanel/>
-            <LabBotPanel target="spot" isMock={isMock} compact={true}/>
-            <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={loadPortfolio}/>
-          </div>
-
-          {/* Mobile: floating Buy/Sell button + bottom sheet */}
-          {token&&(
-            <>
-              <button
-                onClick={()=>setShowOrder(true)}
-                className="md:hidden fixed bottom-20 right-4 z-40 flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-sm shadow-2xl bg-[#2BFFF1] text-[#05060B]"
-                style={{boxShadow:'0 0 24px rgba(43,255,241,0.4)'}}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Trade
-              </button>
-
-              {/* Mobile bottom sheet */}
-              {showOrderForm&&(
-                <div className="md:hidden fixed inset-x-0 z-[200] flex flex-col justify-end" style={{top:0, bottom:'64px'}} onClick={()=>setShowOrder(false)}>
-                  <div
-                    className="bg-[#0B0E14] border-t border-white/[0.08] rounded-t-2xl shadow-2xl"
-                    style={{
-                      maxHeight:'100%',
-                      overflowY:'auto',
-                      overscrollBehavior:'contain',
-                      WebkitOverflowScrolling:'touch',
-                    }}
-                    onClick={e=>e.stopPropagation()}>
-                    <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]">
-                      <div className="flex items-center gap-2">
-                        <TokenImg src={token.logoUri} symbol={token.symbol} size={22}/>
-                        <span className="text-sm font-black text-[#F4F6FA]">{token.symbol}/USD</span>
-                        <span className="text-xs font-bold font-mono text-[#2BFFF1]">{fmtP(livePrice)}</span>
-                      </div>
-                      <button onClick={()=>setShowOrder(false)} className="text-[#4B5563] hover:text-[#A7B0B7] p-1">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                      </button>
-                    </div>
-                    <BotPanel/>
-                    <LabBotPanel target="spot" isMock={isMock} compact={true}/>
-                    <OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={()=>setShowOrder(false)}/>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+          <div className="hidden md:flex w-[240px] lg:w-[260px] flex-shrink-0 border-l border-white/[0.06] flex-col overflow-y-auto bg-[#080A10]"><BotPanel/><LabBotPanel target="spot" isMock={isMock} compact={true}/><OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={loadPortfolio}/></div>
+          {token&&(<>
+            <button onClick={()=>setShowOrder(true)} className="md:hidden fixed bottom-20 right-4 z-40 flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-sm shadow-2xl bg-[#2BFFF1] text-[#05060B]" style={{boxShadow:'0 0 24px rgba(43,255,241,0.4)'}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Trade</button>
+            {showOrderForm&&(<div className="md:hidden fixed inset-x-0 z-[200] flex flex-col justify-end" style={{top:0,bottom:'64px'}} onClick={()=>setShowOrder(false)}>
+              <div className="bg-[#0B0E14] border-t border-white/[0.08] rounded-t-2xl shadow-2xl" style={{maxHeight:'100%',overflowY:'auto',overscrollBehavior:'contain',WebkitOverflowScrolling:'touch'}} onClick={e=>e.stopPropagation()}>
+                <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06]"><div className="flex items-center gap-2"><TokenImg src={token.logoUri} symbol={token.symbol} size={22}/><span className="text-sm font-black text-[#F4F6FA]">{token.symbol}/USD</span><span className="text-xs font-bold font-mono text-[#2BFFF1]">{fmtP(livePrice)}</span></div><button onClick={()=>setShowOrder(false)} className="text-[#4B5563] hover:text-[#A7B0B7] p-1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>
+                <BotPanel/><LabBotPanel target="spot" isMock={isMock} compact={true}/><OrderForm token={token} livePrice={livePrice} isMock={isMock} candles={candles} onSuccess={()=>setShowOrder(false)}/>
+              </div>
+            </div>)}
+          </>)}
         </div>
       )}
 
-      {/* ══════════ PORTFOLIO ══════════════════════════════════════ */}
       {tab==='portfolio'&&(
         <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs font-semibold text-[#A7B0B7] uppercase tracking-widest">Holdings · {isMock?'Mock':'Live'}</p>
-            <button onClick={loadPortfolio} className="text-[10px] text-[#4B5563] hover:text-[#2BFFF1] transition-all flex items-center gap-1">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-            </button>
-          </div>
+          <div className="flex items-center justify-between mb-1"><p className="text-xs font-semibold text-[#A7B0B7] uppercase tracking-widest">Holdings · {isMock?'Mock':'Live'}</p><button onClick={loadPortfolio} className="text-[10px] text-[#4B5563] hover:text-[#2BFFF1] transition-all flex items-center gap-1"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg></button></div>
           {loadingPort?<div className="flex items-center justify-center py-10 gap-2 text-[#4B5563]"><div className="w-5 h-5 border-2 border-[#2BFFF1]/20 border-t-[#2BFFF1] rounded-full animate-spin"/><span className="text-xs">Loading…</span></div>
-          :holdings.length===0?<div className="text-center py-12"><svg className="mx-auto opacity-20 mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="1.5"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg><p className="text-sm text-[#4B5563]">No holdings yet</p></div>:(
-            <>
-              {(()=>{const tv=holdings.reduce((s,h)=>s+(h.currentPrice??0)*h.amount,0);const tc=holdings.reduce((s,h)=>s+h.avg_cost*h.amount,0);const p=tv-tc;return(
-                <div className="rounded-2xl bg-[#0B0E14] border border-white/[0.07] p-3 mb-1">
-                  <p className="text-[9px] text-[#4B5563]">Portfolio Value</p>
-                  <p className="text-xl font-black text-[#F4F6FA]">{fmtUsd(tv)}</p>
-                  <p className={`text-xs font-bold ${p>=0?'text-green-400':'text-red-400'}`}>{p>=0?'+':''}{fmtUsd(p)} ({tc>0?(Math.abs(p)/tc*100).toFixed(1):0}%)</p>
-                </div>
-              );})()}
-              {holdings.map(h=>(
-                <div key={h.id} className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-2.5 flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-full bg-[#0B0E14] border border-white/[0.05] flex items-center justify-center flex-shrink-0"><span className="text-[8px] font-black text-[#2BFFF1]">{h.token_symbol.slice(0,3)}</span></div>
-                  <div className="flex-1 min-w-0"><p className="text-xs font-bold text-[#F4F6FA]">{h.token_symbol}</p><p className="text-[9px] text-[#374151]">{h.amount.toFixed(4)} @ avg {fmtP(h.avg_cost)}</p></div>
-                  <div className="text-right"><p className="text-xs font-mono text-[#F4F6FA]">{fmtUsd((h.currentPrice??0)*h.amount)}</p><p className={`text-[9px] font-bold ${(h.pnl??0)>=0?'text-green-400':'text-red-400'}`}>{(h.pnl??0)>=0?'+':''}{fmtUsd(h.pnl??0)} ({(h.pnlPct??0).toFixed(1)}%)</p></div>
-                  <button onClick={()=>{const t:Token={mint:h.token_mint,symbol:h.token_symbol,name:h.token_name,priceUsd:h.currentPrice??0,change24h:0,volume24h:0,mcap:0,logoUri:'',pairAddress:h.token_mint};setToken(t);setLivePrice(h.currentPrice??0);setTab('chart');setShowOrder(true);}} className="px-2 py-1 rounded-lg text-[9px] font-bold text-red-400 border border-red-500/20 hover:bg-red-500/10 transition-all flex-shrink-0">Sell</button>
-                </div>
-              ))}
-            </>
-          )}
+          :holdings.length===0?<div className="text-center py-12"><svg className="mx-auto opacity-20 mb-3" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="1.5"><rect x="2" y="7" width="20" height="15" rx="2"/><polyline points="17 2 12 7 7 2"/></svg><p className="text-sm text-[#4B5563]">No holdings yet</p></div>:(<>
+            {(()=>{const tv=holdings.reduce((s,h)=>s+(h.currentPrice??0)*h.amount,0);const tc=holdings.reduce((s,h)=>s+h.avg_cost*h.amount,0);const p=tv-tc;return(<div className="rounded-2xl bg-[#0B0E14] border border-white/[0.07] p-3 mb-1"><p className="text-[9px] text-[#4B5563]">Portfolio Value</p><p className="text-xl font-black text-[#F4F6FA]">{fmtUsd(tv)}</p><p className={`text-xs font-bold ${p>=0?'text-green-400':'text-red-400'}`}>{p>=0?'+':''}{fmtUsd(p)} ({tc>0?(Math.abs(p)/tc*100).toFixed(1):0}%)</p></div>);})()}
+            {holdings.map(h=>(
+              <div key={h.id} className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-2.5 flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-full bg-[#0B0E14] border border-white/[0.05] flex items-center justify-center flex-shrink-0"><span className="text-[8px] font-black text-[#2BFFF1]">{h.token_symbol.slice(0,3)}</span></div>
+                <div className="flex-1 min-w-0"><p className="text-xs font-bold text-[#F4F6FA]">{h.token_symbol}</p><p className="text-[9px] text-[#374151]">{h.amount.toFixed(4)} @ avg {fmtP(h.avg_cost)}</p></div>
+                <div className="text-right"><p className="text-xs font-mono text-[#F4F6FA]">{fmtUsd((h.currentPrice??0)*h.amount)}</p><p className={`text-[9px] font-bold ${(h.pnl??0)>=0?'text-green-400':'text-red-400'}`}>{(h.pnl??0)>=0?'+':''}{fmtUsd(h.pnl??0)} ({(h.pnlPct??0).toFixed(1)}%)</p></div>
+                <button onClick={()=>{const t:Token={mint:h.token_mint,symbol:h.token_symbol,name:h.token_name,priceUsd:h.currentPrice??0,change24h:0,volume24h:0,mcap:0,logoUri:'',pairAddress:h.token_mint};setToken(t);setLivePrice(h.currentPrice??0);setTab('chart');setShowOrder(true);}} className="px-2 py-1 rounded-lg text-[9px] font-bold text-red-400 border border-red-500/20 hover:bg-red-500/10 transition-all flex-shrink-0">Sell</button>
+              </div>
+            ))}
+          </>)}
         </div>
       )}
 
-      {/* ══════════ HISTORY ════════════════════════════════════════ */}
       {tab==='history'&&(
         <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
           <p className="text-xs font-semibold text-[#A7B0B7] uppercase tracking-widest mb-2">History · {isMock?'Mock':'Live'}</p>
@@ -709,7 +503,7 @@ export function SpotTradingPage({ isMock, onToggleMock }:Props) {
               <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[9px] font-black ${t.side==='buy'?'bg-green-500/15 text-green-400':'bg-red-500/15 text-red-400'}`}>{t.side==='buy'?'B':'S'}</div>
               <div className="flex-1 min-w-0"><p className="text-xs font-bold text-[#F4F6FA]">{t.side.toUpperCase()} {t.token_symbol}</p><p className="text-[9px] text-[#374151] truncate">{new Date(t.created_at).toLocaleString()}</p></div>
               <div className="text-right flex-shrink-0"><p className="text-xs font-mono text-[#A7B0B7]">${t.amount_usd.toFixed(2)}</p><p className="text-[9px] text-[#374151]">{t.amount_token.toFixed(4)}</p></div>
-              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${t.status==='completed'?'text-green-400 bg-green-500/10':'text-yellow-400 bg-yellow-500/10'}`}>{t.status}</span>
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${t.status==='completed'||t.status==='filled'?'text-green-400 bg-green-500/10':'text-yellow-400 bg-yellow-500/10'}`}>{t.status}</span>
             </div>
           ))}
         </div>
