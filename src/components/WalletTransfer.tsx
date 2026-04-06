@@ -86,6 +86,13 @@ export function WalletTransfer({ onClose }: Props) {
     if (amt <= 0) { setMsg('Enter an amount'); return; }
     if (from === to) { setMsg('Same wallet'); return; }
     if (FIELD[from] === FIELD[to]) { setMsg('These wallets share the same balance pool'); return; }
+    // Prevent mock↔live transfers
+    const fromWallet = WALLETS.find(w => w.id === from);
+    const toWallet = WALLETS.find(w => w.id === to);
+    if (fromWallet && toWallet && fromWallet.live !== toWallet.live) {
+      setMsg('Cannot transfer between live and mock wallets');
+      return;
+    }
     setSaving(true); setMsg('');
     try {
       // Read fresh balances from DB (source of truth)
