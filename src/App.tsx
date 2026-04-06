@@ -8,7 +8,6 @@ import { LabBotPanel } from './components/LabBotPanel';
 import { PositionsTable } from './components/PositionsTable';
 import { PriceChart, formatPrice } from './components/PriceChart';
 import { AuthModal } from './components/AuthModal';
-import { WalletDepositModal } from './components/WalletDepositModal';
 import { PointsBadge, PointsLeaderboard } from './components/PointsLeaderboard';
 import { MarketsPage } from './pages/MarketsPage';
 import { DiscoverPage } from './pages/DiscoverPage';
@@ -353,9 +352,8 @@ export default function App() {
 
       {showAuth && <AuthModal onClose={() => setShowAuth(false)}/>}
       {showChartSettings && <ChartSettings onClose={() => setShowChartSettings(false)} onThemeChange={t => setChartTheme(t)}/>}
-      {showWallet && <WalletDepositModal onClose={() => setShowWallet(false)}/>}
+      {(showWallet || showTransfer) && <WalletTransfer onClose={() => { setShowWallet(false); setShowTransfer(false); }}/>}
       {showPnlShare && <PnlShareCard onClose={() => setShowPnlShare(false)}/>}
-      {showTransfer && <WalletTransfer onClose={() => setShowTransfer(false)}/>}
       <TouchGrassModal show={showTG} onClose={tgSkip} onActivate={tgActivate}/>
       <XeniaBotWidget/>
     </div>
