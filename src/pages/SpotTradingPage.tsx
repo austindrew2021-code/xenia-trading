@@ -219,54 +219,9 @@ function OrderForm({ token, livePrice, isMock, candles, onSuccess }:{ token:Toke
           setAmt(''); setPct(0); onSuccess();
           setExec(false); return;
         }
-        // Platform wallet failed — fall back to Phantom/Solflare
-        const platErr = platResult.error ?? '';
-        const phantom = (window as any).solana ?? (window as any).solflare;
-        if(!phantom) throw new Error(
-          platErr.toLowerCase().includes('account') || platErr.toLowerCase().includes('balance')
-            ? `Insufficient Spot Live balance. Transfer funds from Funding wallet first.`
-            : platErr || 'No Solana wallet found. Fund your Spot Live wallet or install Phantom.'
-        );
-        if(!phantom.isConnected) { try { await phantom.connect(); } catch { throw new Error('Wallet connection cancelled'); } }
-        const userWallet = phantom.publicKey?.toBase58?.();
-        if(!userWallet) throw new Error('No wallet connected');
-
-        setStatus({type:'success',msg:'Getting Jupiter quote…'});
-        const qRes = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
-          method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
-          body:JSON.stringify({ action:'quote', inputMint:side==='buy'?USDC_MINT:token.mint, outputMint:side==='buy'?token.mint:USDC_MINT, amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name, priceUsd:livePrice, userWallet, side }),
-        });
-        const { quote, error:qErr } = await qRes.json();
-        if(qErr||!quote) throw new Error(qErr ?? 'Quote failed');
-
-        setStatus({type:'success',msg:'Building transaction…'});
-        const swapRes = await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
-          method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
-          body:JSON.stringify({ action:'swap', quote, inputMint:side==='buy'?USDC_MINT:token.mint, outputMint:side==='buy'?token.mint:USDC_MINT, amountUsd:amtN, tokenSymbol:token.symbol, tokenName:token.name, priceUsd:livePrice, userWallet, side }),
-        });
-        const { swapTransaction, tradeId, error:swErr } = await swapRes.json();
-        if(swErr||!swapTransaction) throw new Error(swErr ?? 'Swap build failed');
-
-        setStatus({type:'success',msg:'Sign in your wallet…'});
-        let txBuf: Buffer;
-        try { txBuf = Buffer.from(swapTransaction, 'base64'); } catch { throw new Error('Invalid transaction data'); }
-        let tx: any;
-        try { const { VersionedTransaction } = await import('@solana/web3.js') as any; tx = VersionedTransaction.deserialize(txBuf); }
-        catch { const { Transaction } = await import('@solana/web3.js') as any; tx = Transaction.from(txBuf); }
-        const signed = await phantom.signTransaction(tx);
-
-        setStatus({type:'success',msg:'Broadcasting…'});
-        const { Connection } = await import('@solana/web3.js') as any;
-        const conn = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
-        const txHash = await conn.sendRawTransaction(signed.serialize(), { skipPreflight:false, preflightCommitment:'confirmed' });
-        setStatus({type:'success',msg:'Confirming on-chain…'});
-        await conn.confirmTransaction(txHash, 'confirmed');
-
-        await fetch(`${SUPABASE_URL}/functions/v1/spot-swap`,{
-          method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${authToken}`},
-          body:JSON.stringify({ action:'confirm', tradeId, txHash, outputMint:token.mint, tokenSymbol:token.symbol, tokenName:token.name, amountUsd:amtN, priceUsd:livePrice, tokenAmount:tokOut }),
-        });
-        setStatus({type:'success',msg:`Live buy confirmed! ${txHash.slice(0,8)}…`});
+        // Platform wallet failed — show actual error (don't mask it)
+        const platErr = platResult.error ?? 'Trade failed';
+        throw new Error(platErr);
       }
       setShowAnim({ side, symbol: token.symbol, amount: `$${amtN.toFixed(2)}` });
       setAmt(''); setPct(0);
