@@ -216,27 +216,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [account, queue]);
 
   // ── On-chain balance monitoring ─────────────────────────────────────────
-  // Monitor user's deposit address. Falls back to platform address for users
-  // who haven't generated a personal wallet yet (common during initial setup).
+  // Only monitor user's OWN generated wallet. No fallback to shared platform address.
+  // If no wallet exists, liveSOL/liveSOLUSD will be 0 and UI prompts to generate.
   const userDepositAddress: string =
     account?.platform_wallet_address ||
     account?.platform_sol_address ||
     account?.deposit_wallets?.sol ||
     account?.deposit_wallets?.SOL ||
-    PLATFORM_SOL_ADDRESS;
+    '';
 
   const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(userDepositAddress);
 
-  // DEPOSIT DETECTION: only credit when on-chain > DB (new deposit arrived).
-  // NEVER overwrite DB balance downward — that would refund trade deductions.
+  // DEPOSIT DETECTION: credit when on-chain > DB (new deposit arrived).
+  // After trades/sends, the edge function updates DB directly.
   const lastCreditedUSD = useRef(0);
   useEffect(() => {
-    if (!user || !supabase) return;
+    if (!user || !supabase || !userDepositAddress) return;
     if (liveSOLUSD <= 0) return;
 
     const currentDB = account?.real_balance ?? 0;
 
-    // Only credit if on-chain is HIGHER than DB (new deposit)
+    // Only credit if on-chain is HIGHER than DB (new deposit detected)
     if (liveSOLUSD > currentDB && liveSOLUSD !== lastCreditedUSD.current) {
       lastCreditedUSD.current = liveSOLUSD;
       console.log(`[Deposit] +$${(liveSOLUSD - currentDB).toFixed(2)} credited (on-chain: $${liveSOLUSD.toFixed(2)})`);
