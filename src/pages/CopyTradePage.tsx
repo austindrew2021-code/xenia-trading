@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
+// NEW: one source of truth for mock/live. See the note on the header toggle.
+import { tradingMode } from '../lib/tradingMode';
 
 const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
 const COPY_FEE_PCT = 0.1; // 10% of profits go to Xenia
@@ -17,6 +19,8 @@ interface Trader {
   copy_fee_pct: number;
   is_active: boolean;
   verified: boolean;
+  /** NEW: true for the built-in sample profiles. See DEMO_TRADERS below. */
+  is_demo?: boolean;
 }
 
 interface Sub {
@@ -38,6 +42,32 @@ function StatBadge({ label, value, color }: { label: string; value: string; colo
     </div>
   );
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DEMO TRADERS
+
+   These four profiles are placeholder data so the page is not empty before
+   real traders sign up. They have invented win rates, PnL figures and
+   follower counts, and there is no trader behind them — nothing will ever
+   mirror to a follower.
+
+   Previously they carried `verified: true` and could be followed with LIVE
+   funds. A user could allocate real money against SolWhale's "72% win rate,
+   $184,200 total PnL", the subscription would be written with
+   `is_mock: false`, and the money would sit committed against a profile that
+   does not trade. Invented performance data driving real allocation, with a
+   verification badge on it.
+
+   So now: `is_demo: true`, `verified: false`, labelled in the UI, and follows
+   are restricted to mock. Delete this array entirely once real traders exist —
+   an empty state is more honest than a fabricated one.
+   ═══════════════════════════════════════════════════════════════════════ */
+const DEMO_TRADERS: Trader[] = [
+  { id:'demo1', user_id:'', display_name:'SolWhale', bio:'Sample profile — ICT methodology, swing trades only.', win_rate:0.72, total_pnl:184200, monthly_pnl:28400, follower_count:847, copy_fee_pct:0.1, is_active:true, verified:false, is_demo:true },
+  { id:'demo2', user_id:'', display_name:'PumpKing', bio:'Sample profile — pump.fun sniper, fast entries and exits.', win_rate:0.61, total_pnl:92100, monthly_pnl:15600, follower_count:423, copy_fee_pct:0.05, is_active:true, verified:false, is_demo:true },
+  { id:'demo3', user_id:'', display_name:'DegenAlpha', bio:'Sample profile — high risk, 50-300x leverage.', win_rate:0.55, total_pnl:210000, monthly_pnl:41000, follower_count:1204, copy_fee_pct:0.15, is_active:true, verified:false, is_demo:true },
+  { id:'demo4', user_id:'', display_name:'XeniaBot7', bio:'Sample profile — bot-assisted momentum trading.', win_rate:0.68, total_pnl:67000, monthly_pnl:9800, follower_count:312, copy_fee_pct:0.08, is_active:true, verified:false, is_demo:true },
+];
 
 // Become a trader panel
 function BecomeTrader({ userId }: { userId: string }) {
@@ -108,14 +138,36 @@ export function CopyTradePage() {
   const [subs,     setSubs]     = useState<Sub[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [copyAmt,  setCopyAmt]  = useState<Record<string,string>>({});
-  const [isMock,   setIsMock]   = useState(true);
   const [following,setFollowing]= useState<Set<string>>(new Set());
   const [confirm,  setConfirm]  = useState<{trader:Trader;amt:number}|null>(null);
   const [confirming,setConfirming]=useState(false);
   const [followError, setFollowError] = useState('');
 
-  // Sync mock/live with account setting
-  useEffect(() => { if (account) setIsMock(!account.use_real); }, [account?.use_real]);
+  /* ── MODE ────────────────────────────────────────────────────────────
+     CHANGED. This page used to hold its own `isMock` state with a local
+     toggle button in the header:
+
+         const [isMock, setIsMock] = useState(true);
+         useEffect(() => { if (account) setIsMock(!account.use_real); }, [account?.use_real]);
+         <button onClick={() => setIsMock(m => !m)}>
+
+     The effect synced one way, from the account. The button then flipped the
+     local copy WITHOUT touching account.use_real, so the app header could read
+     LIVE while this page read Mock, or the reverse — and `is_mock: isMock` wrote
+     that divergent value onto the subscription.
+
+     Worse, the button was a second way into live mode that bypassed every guard
+     the app has: no confirmation, no balance precondition, no wallet-backup
+     check. Switching to Live here and following a trader committed real funds in
+     two taps.
+
+     Mode now comes from tradingMode, which is the same value the header shows,
+     and it is read-only here. Change it in the header or in Settings, where the
+     guards are.
+     ─────────────────────────────────────────────────────────────────── */
+  const [modeState, setModeState] = useState(tradingMode.get());
+  useEffect(() => tradingMode.subscribe(setModeState), []);
+  const isMock = modeState.mode === 'mock';
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -124,14 +176,9 @@ export function CopyTradePage() {
       supabase.from('copy_traders').select('*').eq('is_active', true).order('monthly_pnl', { ascending: false }).limit(20),
       user ? supabase.from('copy_subscriptions').select('*, trader:copy_traders(*)').eq('follower_id', user.id) : Promise.resolve({ data: [] }),
     ]);
-    // Add mock traders if DB is empty
-    const mockTraders: Trader[] = [
-      { id:'mock1', user_id:'', display_name:'SolWhale', bio:'ICT methodology, swing trades only. 3+ years on-chain.', win_rate:0.72, total_pnl:184200, monthly_pnl:28400, follower_count:847, copy_fee_pct:0.1, is_active:true, verified:true },
-      { id:'mock2', user_id:'', display_name:'PumpKing', bio:'Pump.fun sniper. Fast entries, faster exits. Scalper.', win_rate:0.61, total_pnl:92100, monthly_pnl:15600, follower_count:423, copy_fee_pct:0.05, is_active:true, verified:true },
-      { id:'mock3', user_id:'', display_name:'DegenAlpha', bio:'High risk high reward. 50-300x leverage. DYOR.', win_rate:0.55, total_pnl:210000, monthly_pnl:41000, follower_count:1204, copy_fee_pct:0.15, is_active:true, verified:false },
-      { id:'mock4', user_id:'', display_name:'XeniaBot7', bio:'Bot-assisted momentum trading. Automated entries.', win_rate:0.68, total_pnl:67000, monthly_pnl:9800, follower_count:312, copy_fee_pct:0.08, is_active:true, verified:true },
-    ];
-    const all = [...(tr.data ?? []), ...mockTraders.filter(m => !(tr.data ?? []).some((r: any) => r.id === m.id))];
+    const real = (tr.data ?? []) as Trader[];
+    // Demo profiles only pad the list; real traders always sort first.
+    const all = [...real, ...DEMO_TRADERS.filter(m => !real.some(r => r.id === m.id))];
     setTraders(all);
     setSubs((sb.data ?? []) as any);
     setFollowing(new Set((sb.data ?? []).map((s: any) => s.trader_id)));
@@ -140,10 +187,13 @@ export function CopyTradePage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const balance = isMock ? (account?.mock_balance ?? 0) : (account?.real_balance ?? 0);
+
   const requestFollow = (trader: Trader) => {
     if (!user) return;
     const amt = parseFloat(copyAmt[trader.id] || '100');
     if (isNaN(amt) || amt <= 0) return;
+    setFollowError('');
     setConfirm({ trader, amt });
   };
 
@@ -153,22 +203,31 @@ export function CopyTradePage() {
     setFollowError('');
     const { trader, amt } = confirm;
 
-    // Balance check
-    const balance = isMock ? (account?.mock_balance ?? 0) : (account?.real_balance ?? 0);
+    // NEW: a demo profile has no trader behind it, so a live allocation would
+    // commit real funds against a track record that was never traded.
+    if (trader.is_demo && !isMock) {
+      setFollowError('This is a sample profile with no trader behind it. It can only be followed in mock mode.');
+      setConfirming(false);
+      return;
+    }
+
     if (amt > balance) {
       setFollowError(`Insufficient ${isMock ? 'mock' : 'live'} balance ($${balance.toFixed(2)} available)`);
       setConfirming(false);
       return;
     }
 
-    // Ensure mock traders (user_id='') exist in DB before subscribing
-    if (!trader.user_id) {
+    /* CHANGED: demo profiles are no longer upserted with `user_id: user.id`.
+       That made the follower the OWNER of the trader profile in the DB, and two
+       users following the same demo profile overwrote each other's row. They now
+       persist with an empty user_id and an is_demo flag. */
+    if (trader.is_demo) {
       await supabase.from('copy_traders').upsert({
-        id: trader.id, user_id: user.id,
+        id: trader.id, user_id: null,
         display_name: trader.display_name, bio: trader.bio,
         win_rate: trader.win_rate, total_pnl: trader.total_pnl,
         monthly_pnl: trader.monthly_pnl, follower_count: trader.follower_count,
-        copy_fee_pct: trader.copy_fee_pct, is_active: true, verified: trader.verified,
+        copy_fee_pct: trader.copy_fee_pct, is_active: true, verified: false,
       }, { onConflict: 'id' });
     }
 
@@ -178,11 +237,11 @@ export function CopyTradePage() {
     });
     if (!error) {
       setFollowing(prev => new Set([...prev, trader.id]));
+      setConfirm(null);
     } else {
       setFollowError(error.message);
     }
     setConfirming(false);
-    setConfirm(null);
     await load();
   };
 
@@ -211,17 +270,32 @@ export function CopyTradePage() {
               <div className="flex justify-between"><span className="text-[#6B7280]">Platform fee</span><span className="text-[#F59E0B]">10% of profits</span></div>
               <div className="flex justify-between border-t border-white/[0.06] pt-2 mt-1">
                 <span className="text-[#6B7280]">Your {isMock?'mock':'live'} balance</span>
-                <span className={`font-bold ${(isMock?account?.mock_balance:account?.real_balance??0)??0 >= confirm.amt?'text-green-400':'text-red-400'}`}>
-                  ${((isMock?account?.mock_balance:account?.real_balance)??0).toFixed(2)}
+                {/* CHANGED: the old expression was
+                      ${(isMock?account?.mock_balance:account?.real_balance??0)??0 >= confirm.amt?'text-green-400':'text-red-400'}
+                    `??` binds LOOSER than `>=`, so it parsed as
+                      (balance ?? (0 >= amt)) ? 'green' : 'red'
+                    Any positive balance is truthy, so it showed green whatever the
+                    amount — $50 against a $1,000 follow read as sufficient. Only a
+                    balance of exactly 0 ever showed red. */}
+                <span className={`font-bold ${balance >= confirm.amt ? 'text-green-400' : 'text-red-400'}`}>
+                  ${balance.toFixed(2)}
                 </span>
               </div>
             </div>
+            {confirm.trader.is_demo && (
+              <div className="rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/[0.06] px-3 py-2">
+                <p className="text-[10px] text-[#F59E0B] leading-snug">
+                  Sample profile. The figures shown are placeholder data and there is no trader
+                  behind it, so no trades will mirror to you. Mock mode only.
+                </p>
+              </div>
+            )}
             {followError && <p className="text-[10px] text-red-400 font-semibold">{followError}</p>}
             <p className="text-[10px] text-[#4B5563]">When this trader opens a position, Xenia will mirror it proportionally with your copy amount.</p>
             <div className="flex gap-2">
               <button onClick={() => { setConfirm(null); setFollowError(''); }} className="flex-1 py-2.5 rounded-xl border border-white/[0.08] text-xs font-bold text-[#4B5563] hover:text-[#A7B0B7] transition-all">Cancel</button>
-              <button onClick={confirmFollow} disabled={confirming}
-                className="flex-1 py-2.5 rounded-xl bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 text-xs font-black hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-50">
+              <button onClick={confirmFollow} disabled={confirming || (confirm.trader.is_demo && !isMock) || confirm.amt > balance}
+                className="flex-1 py-2.5 rounded-xl bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 text-xs font-black hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
                 {confirming ? 'Following…' : 'Confirm Follow'}
               </button>
             </div>
@@ -235,10 +309,13 @@ export function CopyTradePage() {
           <p className="text-sm font-black text-[#F4F6FA]">Copy Trading</p>
           <p className="text-[10px] text-[#374151]">Mirror top traders automatically</p>
         </div>
-        <button onClick={() => setIsMock(m => !m)} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-[11px] font-black transition-all ${isMock?'border-white/[0.1] text-[#6B7280]':'border-[#2BFFF1]/50 bg-[#2BFFF1]/15 text-[#2BFFF1]'}`}>
+        {/* CHANGED: read-only indicator, not a toggle. Mode changes go through the
+            header or Settings, where the confirmation and preconditions live. */}
+        <div className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-[11px] font-black ${isMock?'border-white/[0.1] text-[#6B7280]':'border-[#2BFFF1]/50 bg-[#2BFFF1]/15 text-[#2BFFF1]'}`}
+          title="Change mode from the header or Settings">
           <span className={`w-1.5 h-1.5 rounded-full ${isMock?'bg-[#374151]':'bg-[#2BFFF1] animate-pulse'}`}/>
           {isMock ? 'Mock' : 'Live'}
-        </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -266,7 +343,7 @@ export function CopyTradePage() {
                 <span className="text-xs">Loading traders…</span>
               </div>
             ) : traders.map(t => (
-              <div key={t.id} className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 space-y-3">
+              <div key={t.id} className={`rounded-2xl border bg-white/[0.02] p-4 space-y-3 ${t.is_demo?'border-white/[0.05] opacity-90':'border-white/[0.07]'}`}>
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#2BFFF1]/20 to-[#A78BFA]/20 border border-white/[0.1] flex items-center justify-center flex-shrink-0">
                     <span className="text-sm font-black text-[#2BFFF1]">{t.display_name[0]}</span>
@@ -277,6 +354,8 @@ export function CopyTradePage() {
                       {t.verified && (
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="#2BFFF1"><path d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
                       )}
+                      {/* NEW: sample profiles are labelled, not badged. */}
+                      {t.is_demo && <span className="text-[8px] px-1.5 py-0.5 rounded bg-[#F59E0B]/15 text-[#F59E0B] font-bold">SAMPLE</span>}
                       <span className="text-[9px] text-[#4B5563] ml-auto">{t.follower_count} followers</span>
                     </div>
                     <p className="text-[10px] text-[#6B7280] mt-0.5 truncate">{t.bio}</p>
@@ -284,11 +363,17 @@ export function CopyTradePage() {
                 </div>
 
                 <div className="grid grid-cols-4 gap-2 py-2 border-y border-white/[0.05]">
-                  <StatBadge label="Win Rate" value={`${(t.win_rate*100).toFixed(0)}%`} color={t.win_rate>=0.6?'#4ADE80':'#F59E0B'}/>
-                  <StatBadge label="30d PnL"  value={fmtUsd(t.monthly_pnl)} color={t.monthly_pnl>=0?'#4ADE80':'#F87171'}/>
-                  <StatBadge label="Total"    value={fmtUsd(t.total_pnl)} color={t.total_pnl>=0?'#4ADE80':'#F87171'}/>
+                  <StatBadge label="Win Rate" value={`${(t.win_rate*100).toFixed(0)}%`} color={t.is_demo?'#6B7280':t.win_rate>=0.6?'#4ADE80':'#F59E0B'}/>
+                  <StatBadge label="30d PnL"  value={fmtUsd(t.monthly_pnl)} color={t.is_demo?'#6B7280':t.monthly_pnl>=0?'#4ADE80':'#F87171'}/>
+                  <StatBadge label="Total"    value={fmtUsd(t.total_pnl)} color={t.is_demo?'#6B7280':t.total_pnl>=0?'#4ADE80':'#F87171'}/>
                   <StatBadge label="Fee"      value={`${(t.copy_fee_pct*100).toFixed(0)}%`}/>
                 </div>
+
+                {t.is_demo && (
+                  <p className="text-[9px] text-[#F59E0B]/70 leading-snug">
+                    Placeholder figures. No trader behind this profile — mock mode only.
+                  </p>
+                )}
 
                 {following.has(t.id) ? (
                   <button onClick={() => unfollow(t.id)}
@@ -302,7 +387,8 @@ export function CopyTradePage() {
                       <input type="number" placeholder="Copy amount" value={copyAmt[t.id]??''} onChange={e=>setCopyAmt(prev=>({...prev,[t.id]:e.target.value}))}
                         className="flex-1 bg-transparent text-xs text-[#F4F6FA] outline-none" style={{minWidth:0}}/>
                     </div>
-                    <button onClick={() => requestFollow(t)} disabled={!user}
+                    <button onClick={() => requestFollow(t)} disabled={!user || (t.is_demo && !isMock)}
+                      title={t.is_demo && !isMock ? 'Sample profiles can only be followed in mock mode' : undefined}
                       className="px-4 py-1.5 rounded-xl text-xs font-bold bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
                       {user ? 'Follow' : 'Sign in'}
                     </button>
@@ -327,10 +413,15 @@ export function CopyTradePage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-bold text-[#F4F6FA]">{(s.trader as any)?.display_name ?? 'Trader'}</p>
+                    {/* Each subscription keeps the mode it was created in — the app
+                        flag changing does not silently convert a mock follow to live. */}
                     <p className="text-[10px] text-[#4B5563]">Allocated: ${s.copy_amount_usd} · {s.is_mock?'Mock':'Live'}</p>
                   </div>
                   <div className={`text-sm font-bold ${s.total_pnl>=0?'text-green-400':'text-red-400'}`}>{s.total_pnl>=0?'+':''}{fmtUsd(s.total_pnl)}</div>
                 </div>
+                {!s.is_mock && isMock && (
+                  <p className="text-[9px] text-[#F59E0B]/70">This is a live subscription. The app is currently in mock mode; it keeps running live.</p>
+                )}
                 <div className="flex justify-between text-[9px] text-[#4B5563]">
                   <span>Fees paid: ${s.fees_paid.toFixed(2)}</span>
                   <span className={`font-semibold ${s.is_active?'text-green-400':'text-[#374151]'}`}>{s.is_active?'Active':'Paused'}</span>
