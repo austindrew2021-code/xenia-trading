@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../auth/AuthContext';
 import { supabase } from '../lib/supabase';
+// NEW: validate what the model returns before it reaches the database.
+import { validateBotConfig, summarizeIssues, ValidationResult } from '../lib/botConfigValidator';
 
 const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
 
@@ -38,9 +40,12 @@ export function XeniaMascot({ size = 36, glow = false, pulse = false }: { size?:
 }
 
 // ── Bot creation confirmation card ────────────────────────────────────────
-function BotCreateCard({ config, onConfirm, onDismiss }: {
+function BotCreateCard({ config, validation, onConfirm, onDismiss }: {
   config: BotConfig;
-  onConfirm: (name: string, isPublic: boolean, feePct: number) => Promise<void>;
+  /** NEW: what the validator changed and what it wants the user to know. */
+  validation: ValidationResult | null;
+  /** CHANGED: returns whether the save actually succeeded. See the note below. */
+  onConfirm: (name: string, isPublic: boolean, feePct: number) => Promise<boolean>;
   onDismiss: () => void;
 }) {
   const [name,     setName]     = useState(config.name ?? '');
@@ -48,15 +53,26 @@ function BotCreateCard({ config, onConfirm, onDismiss }: {
   const [feePct,   setFeePct]   = useState(0);
   const [saving,   setSaving]   = useState(false);
   const [done,     setDone]     = useState(false);
+  const [showIssues, setShowIssues] = useState(false);
 
   const { user: cardUser } = useAuth();
 
+  /* CHANGED. The old version was:
+
+         await onConfirm(name.trim(), isPublic, feePct);
+         if (cardUser) setDone(true);
+
+     with the parent's handler doing `await createBot(...); setPendingBot(null)`.
+     Clearing pendingBot unmounts this card, so setDone(true) landed on a dead
+     component and the "Bot created!" screen never appeared — the card just
+     vanished. The parent now leaves the card mounted and this waits on a real
+     success/failure result. */
   const submit = async () => {
     if (!name.trim()) return;
     setSaving(true);
-    await onConfirm(name.trim(), isPublic, feePct);
-    if (cardUser) setDone(true); // only show "done" if actually saved
+    const ok = await onConfirm(name.trim(), isPublic, feePct);
     setSaving(false);
+    if (ok) setDone(true);
   };
 
   if (done) return (
@@ -67,6 +83,9 @@ function BotCreateCard({ config, onConfirm, onDismiss }: {
       <button onClick={onDismiss} className="text-[10px] text-[#4B5563] hover:text-[#A7B0B7] underline">Dismiss</button>
     </div>
   );
+
+  const errors   = validation?.issues.filter(i => i.severity === 'error')   ?? [];
+  const warnings = validation?.issues.filter(i => i.severity === 'warning') ?? [];
 
   return (
     <div className="rounded-2xl border border-[#2BFFF1]/30 bg-[#2BFFF1]/04 p-4 space-y-3">
@@ -97,6 +116,30 @@ function BotCreateCard({ config, onConfirm, onDismiss }: {
         </div>
       </div>
 
+      {/* NEW: what the validator changed, and what it wants flagged. Shown, not
+          hidden — a config that was silently repaired is one the user should be
+          able to inspect before it trades. */}
+      {validation && validation.issues.length > 0 && (
+        <div className="rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/[0.06] px-2.5 py-2 space-y-1">
+          <button onClick={() => setShowIssues(v => !v)} className="w-full flex items-center justify-between">
+            <span className="text-[10px] font-bold text-[#F59E0B]">{summarizeIssues(validation)}</span>
+            <span className="text-[9px] text-[#F59E0B]/60">{showIssues ? 'Hide' : 'Show'}</span>
+          </button>
+          {showIssues && (
+            <div className="space-y-1 pt-1">
+              {errors.map((i, k) => (
+                <p key={`e${k}`} className="text-[9px] text-[#F59E0B] leading-snug">
+                  · {i.message}{i.fix ? ` ${i.fix}` : ''}
+                </p>
+              ))}
+              {warnings.map((i, k) => (
+                <p key={`w${k}`} className="text-[9px] text-[#F59E0B]/70 leading-snug">· {i.message}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Name */}
       <div>
         <label className="text-[9px] text-[#4B5563] block mb-1 font-semibold">BOT NAME</label>
@@ -113,7 +156,7 @@ function BotCreateCard({ config, onConfirm, onDismiss }: {
         <div>
           <label className="text-[9px] text-[#4B5563] block mb-1 font-semibold">VISIBILITY</label>
           <div className="flex rounded-xl overflow-hidden border border-white/[0.07]">
-            <button onClick={() => setPublic(false)} className={`flex-1 py-2 text-[10px] font-bold transition-all ${!isPublic ? 'bg-[#2BFFF1]/15 text-[#2BFFF1]' : 'text-[#4B5563] hover:text-[#A7B0B7]'}`}>Private</button>
+            <button onClick={() => { setPublic(false); setFeePct(0); }} className={`flex-1 py-2 text-[10px] font-bold transition-all ${!isPublic ? 'bg-[#2BFFF1]/15 text-[#2BFFF1]' : 'text-[#4B5563] hover:text-[#A7B0B7]'}`}>Private</button>
             <button onClick={() => setPublic(true)}  className={`flex-1 py-2 text-[10px] font-bold transition-all ${isPublic  ? 'bg-[#2BFFF1]/15 text-[#2BFFF1]' : 'text-[#4B5563] hover:text-[#A7B0B7]'}`}>Public</button>
           </div>
         </div>
@@ -174,6 +217,10 @@ export function XeniaBotWidget() {
   const [limitHit, setLimitHit] = useState(false);
   // Pending bot config waiting for user to confirm
   const [pendingBot, setPendingBot] = useState<BotConfig | null>(null);
+  // NEW: the validator's verdict on that config.
+  const [pendingValidation, setPendingValidation] = useState<ValidationResult | null>(null);
+  // NEW: one auto-retry per config, so a bad response cannot loop.
+  const retriedRef = useRef(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLInputElement>(null);
@@ -185,12 +232,14 @@ export function XeniaBotWidget() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, loading, pendingBot]);
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 100); }, [open]);
 
-  const send = async (text = input.trim()) => {
+  const send = async (text = input.trim(), isRetry = false) => {
     if (!text || loading || limitHit) return;
-    setInput('');
+    if (!isRetry) setInput('');
     const userMsg: Msg = { role: 'user', content: text };
+    // A retry is a correction to the model, not something the user typed — keep
+    // it out of the visible transcript but inside the conversation history.
     const next = [...msgs, userMsg];
-    setMsgs(next);
+    if (!isRetry) setMsgs(next);
     setLoading(true);
 
     try {
@@ -216,12 +265,9 @@ export function XeniaBotWidget() {
         const tip = user ? 'Limit resets midnight UTC.' : 'Sign in for 30 messages/day.';
         setMsgs(prev => [...prev, { role: 'assistant', content: `Daily message limit reached (${d.limit}/day). ${tip}` }]);
       } else if (d.text) {
-        setMsgs(prev => [...prev, { role: 'assistant', content: d.text }]);
+        if (!isRetry) setMsgs(prev => [...prev, { role: 'assistant', content: d.text }]);
         if (d.usage) setUsage(d.usage);
-        // If AI returned a bot config, queue it for confirmation
-        if (d.bot_config) {
-          setTimeout(() => setPendingBot(d.bot_config), 300);
-        }
+        if (d.bot_config) handleBotConfig(d.bot_config);
       } else {
         setMsgs(prev => [...prev, { role: 'assistant', content: 'Something went wrong fren, try again.' }]);
       }
@@ -231,17 +277,69 @@ export function XeniaBotWidget() {
     setLoading(false);
   };
 
+  /* ═══════════════════════════════════════════════════════════════════════
+     NEW: VALIDATE BEFORE THE CARD, NOT AFTER THE INSERT
+
+     The model's JSON used to go straight into the confirmation card and then
+     straight into Supabase. Nothing checked that any of it was real.
+
+     A model asked for "a bot using RSI divergence and Ichimoku cloud" will
+     confidently return { id: 'rsi_divergence' } and { id: 'ichimoku_cloud' }.
+     Neither is an indicator this platform computes. The insert succeeds, the bot
+     appears in The Lab, the user deploys it — and it never fires. No error at any
+     step. The user concludes the AI builder is broken, and they are right, but
+     not in a way anyone can debug from the outside.
+
+     Now: repair what is repairable (rsi_divergence -> rsi), drop what is not,
+     and when the config cannot be salvaged, re-prompt the model with the exact
+     list of valid ids. That retry usually succeeds, which makes the feature more
+     reliable rather than more restricted.
+
+     One retry only. A model that fails twice needs the user to rephrase, not an
+     infinite loop against their daily message limit.
+     ═══════════════════════════════════════════════════════════════════════ */
+  const handleBotConfig = (raw: unknown) => {
+    const result = validateBotConfig(raw, { barsAvailable: 500 });
+
+    if (!result.valid && result.retryPrompt && !retriedRef.current) {
+      retriedRef.current = true;
+      setMsgs(prev => [...prev, {
+        role: 'assistant',
+        content: 'Some of those indicators are not ones I can actually run. Let me rebuild it properly…',
+      }]);
+      void send(result.retryPrompt, true);
+      return;
+    }
+
+    if (!result.valid) {
+      setMsgs(prev => [...prev, {
+        role: 'assistant',
+        content: 'I could not build a working bot from that — the indicators I picked are not ones '
+          + 'this platform computes. Try naming the indicators directly, for example '
+          + '"RSI and EMA crossover" or "Bollinger Bands with ATR stops".',
+      }]);
+      retriedRef.current = false;
+      return;
+    }
+
+    retriedRef.current = false;
+    setPendingValidation(result);
+    setTimeout(() => setPendingBot(result.repaired as unknown as BotConfig), 300);
+  };
+
   // Actually save the bot to Supabase
-  const createBot = async (name: string, isPublic: boolean, feePct: number) => {
-    if (!supabase || !pendingBot) return;
+  // CHANGED: returns whether the save succeeded, so the card can show its
+  // success state instead of being unmounted out from under itself.
+  const createBot = async (name: string, isPublic: boolean, feePct: number): Promise<boolean> => {
+    if (!supabase || !pendingBot) return false;
     if (!user) {
-      // Not signed in — prompt them
       setMsgs(prev => [...prev, {
         role: 'assistant',
         content: "You need to sign in before saving a bot to The Lab. Tap Sign In in the top right, then come back and I will create it for you."
       }]);
       setPendingBot(null);
-      return;
+      setPendingValidation(null);
+      return false;
     }
     const { error } = await supabase.from('custom_bots').insert({
       user_id:         user.id,
@@ -254,11 +352,18 @@ export function XeniaBotWidget() {
       entry_rules:     pendingBot.entry_rules ?? { logic: 'AND' },
       exit_rules:      pendingBot.exit_rules  ?? { mode: 'tp_sl', tp_pct: 5, sl_pct: 2 },
       risk_rules:      pendingBot.risk_rules  ?? { max_position_pct: 10 },
-      fee_pct:         feePct / 100,
+      // CHANGED: a private bot cannot earn a fee, so it must not carry one. The
+      // fee state persisted when the user toggled Public -> Private, writing a
+      // 5% fee onto a bot that is not in the marketplace.
+      fee_pct:         isPublic ? feePct / 100 : 0,
+      // NEW: mode is a property of the DEPLOYMENT, not of creation. Null here;
+      // BotLabPage sets it when the bot is actually deployed. Without this, a bot
+      // created while the app happened to be in live mode would inherit live.
+      deployed_mode:   null,
     });
     if (error) {
       setMsgs(prev => [...prev, { role: 'assistant', content: `Failed to save: ${error.message}` }]);
-      return;
+      return false;
     }
     // Dispatch event so BotLabPage refreshes instantly
     window.dispatchEvent(new CustomEvent('xenia:bot-created'));
@@ -267,9 +372,10 @@ export function XeniaBotWidget() {
       role: 'assistant',
       content: `"${name}" is now in The Lab! Navigate to The Lab section to deploy it. You can edit indicators, TP/SL, and everything else there before going live.`
     }]);
+    return true;
   };
 
-  const dismissBot = () => { setPendingBot(null); };
+  const dismissBot = () => { setPendingBot(null); setPendingValidation(null); };
 
   return (
     <>
@@ -304,7 +410,7 @@ export function XeniaBotWidget() {
                 <span className="text-[9px] text-green-400">Online · {usage?.remaining ?? '—'} msgs left today</span>
               </div>
             </div>
-            <button onClick={() => { setMsgs([]); setLimitHit(false); setPendingBot(null); }}
+            <button onClick={() => { setMsgs([]); setLimitHit(false); setPendingBot(null); setPendingValidation(null); retriedRef.current = false; }}
               className="text-[9px] text-[#374151] hover:text-[#6B7280] px-1.5 py-0.5 rounded border border-white/[0.05]">Clear</button>
             <button onClick={() => setOpen(false)} className="text-[#4B5563] hover:text-[#A7B0B7] p-0.5">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -365,7 +471,10 @@ export function XeniaBotWidget() {
               <div className="pl-7">
                 <BotCreateCard
                   config={pendingBot}
-                  onConfirm={async (name, isPublic, feePct) => { await createBot(name, isPublic, feePct); setPendingBot(null); }}
+                  validation={pendingValidation}
+                  /* CHANGED: no longer clears pendingBot here — that unmounted the
+                     card before it could show its success state. Dismiss clears it. */
+                  onConfirm={createBot}
                   onDismiss={dismissBot}
                 />
               </div>
