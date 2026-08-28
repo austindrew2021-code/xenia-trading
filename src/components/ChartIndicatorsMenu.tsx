@@ -39,7 +39,7 @@ export const ALL_INDICATORS: IndicatorConfig[] = [
 
   // ── Volatility ─────────────────────────────────────────────────────
   { id:'bbands',   name:'Bollinger Bands',              shortName:'BB',      category:'Volatility', popular:true,  description:'SMA ± N standard deviations. Squeeze = low volatility, expansion = high vol.', params:[{key:'period',label:'Length',default:20,min:5,max:100},{key:'mult',label:'Mult',default:2,min:0.5,max:5}] },
-  { id:'atr',      name:'Average True Range',           shortName:'ATR',     category:'Volatility', popular:true,  description:'Average of true ranges. Measures volatility, not direction. Used for stop sizing.', params:[{key:'period',label:'Length',default:14,min:2,max:50}] },
+  { id:'atr',      name:'Average True Range',           shortName:'ATR',     category:'Volatility', popular:true,  description:'Wilder-smoothed average of true ranges. Measures volatility, not direction. Used for stop sizing.', params:[{key:'period',label:'Length',default:14,min:2,max:50}] },
   { id:'keltner',  name:'Keltner Channel',              shortName:'KC',      category:'Volatility', description:'EMA ± N×ATR. When BB is inside KC = Squeeze. Breakout predicts big move.', params:[{key:'period',label:'EMA',default:20,min:5,max:100},{key:'mult',label:'Mult',default:2,min:0.5,max:5}] },
   { id:'donchian', name:'Donchian Channel',             shortName:'DC',      category:'Volatility', description:'Highest high / lowest low over N periods. Turtle Traders strategy foundation.', params:[{key:'period',label:'Length',default:20,min:5,max:200}] },
   { id:'stddev',   name:'Standard Deviation',           shortName:'StdDev',  category:'Volatility', description:'Statistical measure of price dispersion. High = volatile, low = consolidating.', params:[{key:'period',label:'Length',default:20,min:5,max:100}] },
@@ -62,12 +62,66 @@ export const ALL_INDICATORS: IndicatorConfig[] = [
 
   // ── ICT / Smart Money ──────────────────────────────────────────────
   { id:'fvg',      name:'Fair Value Gap',               shortName:'FVG',     category:'ICT / Smart Money', popular:true,  description:'3-candle imbalance where price jumps. Acts as magnet for future price. Bullish/bearish.', params:[] },
-  { id:'ob',       name:'Order Block',                  shortName:'OB',      category:'ICT / Smart Money', popular:true,  description:'Last opposing candle before a strong move. Institutional accumulation/distribution zones.', params:[] },
+  { id:'ob',       name:'Order Block',                  shortName:'OB',      category:'ICT / Smart Money', popular:true,  description:'Last opposing candle before a strong move. Institutional accumulation/distribution zones.', params:[{key:'lookback',label:'Lookback',default:50,min:10,max:200}] },
   { id:'sweep',    name:'Liquidity Sweep',              shortName:'Sweep',   category:'ICT / Smart Money', popular:true,  description:'Price takes out swing high/low stops before reversing. Inducement + reversal signal.', params:[{key:'lookback',label:'Lookback',default:20,min:5,max:100}] },
   { id:'bos',      name:'Break of Structure',           shortName:'BOS',     category:'ICT / Smart Money', description:'Price breaks previous swing high (bullish BOS) or low (bearish BOS). Trend continuation.', params:[] },
   { id:'choch',    name:'Change of Character',          shortName:'CHoCH',   category:'ICT / Smart Money', description:'First opposite BOS after a trend — signals potential trend reversal beginning.', params:[] },
   { id:'ifvg',     name:'Inverse Fair Value Gap',       shortName:'IFVG',    category:'ICT / Smart Money', description:'FVG that gets inverted (price trades through it). Becomes opposing zone. Xenia Bot 4 strategy.', params:[] },
 ];
+
+/* ═══════════════════════════════════════════════════════════════════════
+   COVERAGE AUDIT
+   ═══════════════════════════════════════════════════════════════════════
+
+   This menu and PriceChart's render loop are separate files that must agree,
+   and nothing was checking that they did. When they drift, the failure is
+   silent: the user taps an indicator, the row shows a ✓, and nothing appears
+   on the chart. No error, nothing to search for.
+
+   That had already happened once. `ob` (Order Block) was listed here — marked
+   popular ★ — with no `id === 'ob'` branch in PriceChart. The detection logic
+   existed, but it was wired to the separate OB/Liq toolbar button instead, so
+   the menu entry was dead.
+
+   Keep this list in step with PriceChart's render loop. The dev assertion below
+   fails loudly the moment they diverge again.
+
+   Declared here rather than imported from PriceChart because PriceChart imports
+   this file — pulling the ids back the other way would be circular.
+   ═══════════════════════════════════════════════════════════════════════ */
+export const CHART_IMPLEMENTED_IDS: readonly string[] = [
+  'sma','ema','wma','hma','dema','tema','vwap','alma',
+  'bbands','keltner','donchian','stddev','chaikin','atr',
+  'supertrend','psar','adx','dmi','ichimoku',
+  'rsi','macd','stoch','stochrsi','cci','roc','willr','mfi','aroon','ultimate',
+  'obv','volosc','cmf','vpt','force','eom',
+  'fvg','ob','sweep','bos','choch','ifvg',
+];
+
+export function auditIndicatorCoverage(): {
+  ok: boolean; deadMenuEntries: string[]; unlisted: string[]; summary: string;
+} {
+  const menuIds = ALL_INDICATORS.map(i => i.id);
+  const implemented = new Set(CHART_IMPLEMENTED_IDS);
+  const deadMenuEntries = menuIds.filter(id => !implemented.has(id));
+  const unlisted = CHART_IMPLEMENTED_IDS.filter(id => !menuIds.includes(id));
+  const ok = deadMenuEntries.length === 0;
+  return {
+    ok, deadMenuEntries, unlisted,
+    summary: ok
+      ? `${menuIds.length} indicators, all render.`
+      : `${deadMenuEntries.length} menu ${deadMenuEntries.length === 1 ? 'entry does' : 'entries do'} `
+        + `nothing when tapped: ${deadMenuEntries.join(', ')}. `
+        + `Add a matching branch in PriceChart's render loop, or remove them here.`,
+  };
+}
+
+// Dev-time assertion. In CI, call auditIndicatorCoverage() and fail the build.
+if ((import.meta as any).env?.DEV) {
+  const a = auditIndicatorCoverage();
+  if (!a.ok) console.error('[ChartIndicatorsMenu]', a.summary);
+  if (a.unlisted.length) console.warn('[ChartIndicatorsMenu] implemented but not offered:', a.unlisted.join(', '));
+}
 
 const CATEGORIES = ['Popular', 'Moving Averages', 'Oscillators', 'Volatility', 'Volume', 'Trend', 'ICT / Smart Money'];
 
