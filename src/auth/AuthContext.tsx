@@ -8,6 +8,19 @@ interface AccountStats { totalPnl: number; winCount: number; lossCount: number; 
 interface MonthPoints { points: number; volume: number; trades: number; }
 interface DepositRecord { txHash: string; amountUsd: number; asset: string; chain: string; status: 'pending' | 'confirmed'; createdAt: number; }
 
+// NEW: what refreshBalance hands back. See the comment on refreshBalance for why
+// returning this matters.
+export interface BalanceSnapshot {
+  real_balance: number;
+  mock_balance: number;
+  spot_live_balance: number;
+  spot_mock_balance: number;
+  leverage_balance: number;
+  bot_balance: number;
+  bot_mock_balance: number;
+  use_real: boolean;
+}
+
 export interface TradingAccount {
   id: string; user_id: string; username: string | null;
   mock_balance: number; real_balance: number; spot_live_balance: number;
@@ -18,6 +31,10 @@ export interface TradingAccount {
   positions: Position[]; stats: AccountStats;
   monthly_points: Record<string, MonthPoints>;
   deposits: DepositRecord[]; deposit_wallets: Record<string, string>;
+  // NEW: columns added in the build guide's schema step.
+  wallet_backup_confirmed: boolean;
+  strategy_specs: unknown[];
+  research_trials: Record<string, number>;
 }
 
 interface AuthCtx {
@@ -27,7 +44,8 @@ interface AuthCtx {
   signIn: (email: string, password: string) => Promise<string | null>;
   signOut: () => Promise<void>;
   saveAccount: (patch: Partial<TradingAccount>) => Promise<void>;
-  refreshBalance: () => Promise<void>;
+  // CHANGED: was Promise<void>. Now returns the fresh values.
+  refreshBalance: () => Promise<BalanceSnapshot | null>;
   syncPositions: (positions: Position[]) => void;
   recordTrade: (notionalUsd: number, pnl: number, won: boolean) => void;
   connectWallet: (type: 'sol' | 'evm', address: string) => void;
@@ -68,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchAccount = useCallback(async (uid: string) => {
     if (!supabase) return;
     let { data } = await supabase.from('trading_accounts').select('*').eq('user_id', uid).single();
-    
+
     // Auto-create if row doesn't exist (safety net)
     if (!data) {
       const { data: userData } = await supabase.auth.getUser();
@@ -84,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await supabase.from('trading_accounts').select('*').eq('user_id', uid).single();
       data = res.data;
     }
-    
+
     if (data) {
       const platformAddr = data.platform_wallet_address ?? data.platform_sol_address ?? null;
       const dw = data.deposit_wallets ?? {};
@@ -97,6 +115,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         bot_mock_balance: data.bot_mock_balance ?? 0, use_real: data.use_real ?? false,
         positions: data.positions ?? [], stats: data.stats ?? { totalPnl: 0, winCount: 0, lossCount: 0, tradeCount: 0 },
         monthly_points: data.monthly_points ?? {}, deposits: data.deposits ?? [],
+        // NEW: defaults so a row created before the migration still reads safely.
+        // Backup defaults to FALSE — never infer that a wallet is backed up.
+        wallet_backup_confirmed: data.wallet_backup_confirmed ?? false,
+        strategy_specs: data.strategy_specs ?? [],
+        research_trials: data.research_trials ?? {},
       } as TradingAccount);
     }
   }, []);
@@ -133,6 +156,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           use_real: d.use_real ?? prev.use_real,
           platform_wallet_address: d.platform_wallet_address ?? d.platform_sol_address ?? prev.platform_wallet_address,
           deposit_wallets: d.deposit_wallets ?? prev.deposit_wallets,
+          // NEW
+          wallet_backup_confirmed: d.wallet_backup_confirmed ?? prev.wallet_backup_confirmed,
         } : prev);
       }).subscribe();
     return () => { supabase?.removeChannel(channel); };
@@ -177,14 +202,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [user]);
 
-  // refreshBalance: reads ALL balance fields + use_real from DB
-  const refreshBalance = useCallback(async () => {
-    if (!user || !supabase) return;
+  /* ── refreshBalance ──────────────────────────────────────────────────
+     CHANGED: now RETURNS the fresh values as well as setting state.
+
+     Why. setAccount schedules a re-render; it does not update the `account`
+     variable already captured by whatever called this. So code shaped like
+
+         await refreshBalance();
+         setCapital(newMode ? account.real_balance : account.mock_balance);
+
+     reads the PRE-refresh balance, because `account` there is a closure value
+     from the render that started the call. That was the bug in App.tsx's
+     LiveMockToggle — the user switched to live and saw the wrong number.
+
+     Returning the data lets a caller use it directly:
+
+         const fresh = await refreshBalance();
+         setCapital(useReal ? fresh.real_balance : fresh.mock_balance);
+
+     Existing callers that ignore the return value are unaffected.
+     ─────────────────────────────────────────────────────────────────── */
+  const refreshBalance = useCallback(async (): Promise<BalanceSnapshot | null> => {
+    if (!user || !supabase) return null;
     const { data } = await supabase.from('trading_accounts')
       .select('real_balance,mock_balance,spot_live_balance,spot_mock_balance,leverage_balance,bot_balance,bot_mock_balance,use_real')
       .eq('user_id', user.id).single();
-    if (data) {
-      setAccount(prev => prev ? {
+    if (!data) return null;
+
+    let snapshot: BalanceSnapshot | null = null;
+    setAccount(prev => {
+      if (!prev) return prev;
+      const next = {
         ...prev,
         real_balance: data.real_balance ?? prev.real_balance,
         mock_balance: data.mock_balance ?? prev.mock_balance,
@@ -194,8 +242,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         bot_balance: data.bot_balance ?? prev.bot_balance,
         bot_mock_balance: data.bot_mock_balance ?? prev.bot_mock_balance,
         use_real: data.use_real ?? prev.use_real,
-      } : prev);
-    }
+      };
+      snapshot = {
+        real_balance: next.real_balance, mock_balance: next.mock_balance,
+        spot_live_balance: next.spot_live_balance, spot_mock_balance: next.spot_mock_balance,
+        leverage_balance: next.leverage_balance, bot_balance: next.bot_balance,
+        bot_mock_balance: next.bot_mock_balance, use_real: next.use_real,
+      };
+      return next;
+    });
+
+    // If there was no prior account object the updater above never ran, so fall
+    // back to the row we just read rather than returning null.
+    return snapshot ?? {
+      real_balance: data.real_balance ?? 0, mock_balance: data.mock_balance ?? 0,
+      spot_live_balance: data.spot_live_balance ?? 0, spot_mock_balance: data.spot_mock_balance ?? 0,
+      leverage_balance: data.leverage_balance ?? 0, bot_balance: data.bot_balance ?? 0,
+      bot_mock_balance: data.bot_mock_balance ?? 0, use_real: data.use_real ?? false,
+    };
   }, [user]);
 
   const syncPositions = useCallback((positions: Position[]) => {
@@ -227,27 +291,75 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const { sol: liveSOL, usd: liveSOLUSD } = useSolanaBalance(userDepositAddress);
 
-  // DEPOSIT DETECTION: credit when on-chain > DB (new deposit arrived).
-  // After trades/sends, the edge function updates DB directly.
-  const lastCreditedUSD = useRef(0);
+  /* ── DEPOSIT DETECTION ───────────────────────────────────────────────
+     REWRITTEN. The previous version compared the on-chain USD VALUE against
+     the DB balance and credited the difference:
+
+         if (liveSOLUSD > currentDB && liveSOLUSD !== lastCreditedUSD.current) {
+           setAccount(... real_balance: liveSOLUSD)
+           supabase.update({ real_balance: liveSOLUSD })
+         }
+
+     Two problems, and the first one costs real money.
+
+     1. SOL PRICE MOVEMENT IS TREATED AS A DEPOSIT. The USD value of a fixed
+        amount of SOL changes every poll. When SOL rises, liveSOLUSD exceeds the
+        DB balance and the user is credited for the price move as if they had
+        deposited. When SOL falls nothing reduces it, because the condition is
+        one-directional. So the balance RATCHETS UPWARD with volatility, and the
+        user can withdraw money that was never deposited. On a 10% SOL day that
+        is 10% of every live balance on the platform.
+
+     2. It ASSIGNS rather than adds: `real_balance = liveSOLUSD` overwrites the
+        whole balance with the wallet's value. Any funds moved out to
+        spot_live_balance or bot_balance get silently re-credited on the next
+        poll, so an internal transfer duplicates money.
+
+     The fix: a deposit is an increase in the QUANTITY of SOL held, not in its
+     USD value. Price moves do not change quantity. So track lamports, and credit
+     only the USD value of an actual increase — as a delta, added to the existing
+     balance rather than replacing it.
+
+     Note this still leaves live balances denominated in USD while the asset is
+     SOL, so an unrealised price move is not reflected until the next deposit.
+     That is a modelling decision to make deliberately, not to fix by accident
+     here. The safe version is the one that cannot invent money.
+     ─────────────────────────────────────────────────────────────────── */
+  const lastSeenSol = useRef<number | null>(null);
+  const DUST_SOL = 0.0005;   // ignore rent-exempt noise and fee dust
+
   useEffect(() => {
     if (!user || !supabase || !userDepositAddress) return;
-    if (liveSOLUSD <= 0) return;
+    if (!Number.isFinite(liveSOL) || liveSOL < 0) return;
 
-    const currentDB = account?.real_balance ?? 0;
+    // First reading for this wallet: record the baseline, credit nothing.
+    // Otherwise a returning user's whole balance would look like a fresh deposit.
+    if (lastSeenSol.current === null) { lastSeenSol.current = liveSOL; return; }
 
-    // Only credit if on-chain is HIGHER than DB (new deposit detected)
-    if (liveSOLUSD > currentDB && liveSOLUSD !== lastCreditedUSD.current) {
-      lastCreditedUSD.current = liveSOLUSD;
-      console.log(`[Deposit] +$${(liveSOLUSD - currentDB).toFixed(2)} credited (on-chain: $${liveSOLUSD.toFixed(2)})`);
+    const deltaSol = liveSOL - lastSeenSol.current;
+    lastSeenSol.current = liveSOL;
 
-      setAccount(prev => prev ? { ...prev, real_balance: liveSOLUSD } : prev);
-      supabase.from('trading_accounts')
-        .update({ real_balance: liveSOLUSD })
-        .eq('user_id', user.id)
-        .then(({ error }) => { if (error) console.error('[Deposit write failed]', error); });
-    }
-  }, [liveSOL, liveSOLUSD, user]);
+    // Only an INCREASE in quantity is a deposit. Decreases are withdrawals or
+    // trades, which the edge function already accounts for.
+    if (deltaSol <= DUST_SOL) return;
+
+    const solPriceUsd = liveSOL > 0 ? liveSOLUSD / liveSOL : 0;
+    const creditUsd = deltaSol * solPriceUsd;
+    if (creditUsd <= 0) return;
+
+    const nextBalance = (account?.real_balance ?? 0) + creditUsd;
+    console.log(`[Deposit] +${deltaSol.toFixed(6)} SOL = $${creditUsd.toFixed(2)} credited`);
+
+    setAccount(prev => prev ? { ...prev, real_balance: nextBalance } : prev);
+    supabase.from('trading_accounts')
+      .update({ real_balance: nextBalance })
+      .eq('user_id', user.id)
+      .then(({ error }) => { if (error) console.error('[Deposit write failed]', error); });
+  }, [liveSOL, liveSOLUSD, user, userDepositAddress]);
+
+  // Reset the baseline when the watched wallet changes, so a new address does
+  // not inherit the previous one's quantity.
+  useEffect(() => { lastSeenSol.current = null; }, [userDepositAddress]);
 
   const connectWallet = useCallback((type: 'sol' | 'evm', address: string) => {
     queue(type === 'sol' ? { sol_address: address } : { evm_address: address });
