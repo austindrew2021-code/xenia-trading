@@ -4,10 +4,35 @@ import {
   IChartApi, ISeriesApi, CandlestickSeries, HistogramSeries, LineSeries,
   PriceScaleMode,
 } from 'lightweight-charts';
+// ── NEW ────────────────────────────────────────────────────────────────────
+import { toSeriesData, paneMarginsFor, diagnoseAll } from './chartIndicatorBridge';
+// ───────────────────────────────────────────────────────────────────────────
 
 // ── Indicator math helpers ────────────────────────────────────────────────
 function indSMA(closes: number[], n: number): (number|null)[] {
   return closes.map((_,i) => i<n-1?null:closes.slice(i-n+1,i+1).reduce((a,b)=>a+b,0)/n);
+}
+/* NEW: Wilder's smoothing (alpha = 1/n, not 2/(n+1)).
+   ATR and ADX are DEFINED with this. indSMA was standing in for it, which makes
+   both disagree with every other platform — and since stops elsewhere in Xenia
+   are quoted in ATR multiples, a different ATR means the chart and the backtest
+   describe different stop distances for the same trade. */
+function indRMA(vals: (number|null)[], n: number): (number|null)[] {
+  const out: (number|null)[] = new Array(vals.length).fill(null);
+  const clean = vals.map(v => (typeof v === 'number' && Number.isFinite(v)) ? v : null);
+  let start = clean.findIndex(v => v !== null);
+  if (start < 0 || clean.length < start + n) return out;
+  let seed = 0;
+  for (let i = start; i < start + n; i++) seed += clean[i] as number;
+  seed /= n;
+  out[start + n - 1] = seed;
+  for (let i = start + n; i < clean.length; i++) {
+    const v = clean[i];
+    if (v === null) { out[i] = seed; continue; }
+    seed = (seed * (n - 1) + v) / n;
+    out[i] = seed;
+  }
+  return out;
 }
 function indEMA(closes: number[], n: number): (number|null)[] {
   const k=2/(n+1); const out: (number|null)[]=new Array(closes.length).fill(null);
@@ -49,7 +74,8 @@ function indKeltner(candles:{high:number;low:number;close:number}[], n:number, m
   const closes=candles.map(c=>c.close);
   const mid=indEMA(closes,n);
   const trArr=candles.map((c,i)=>i===0?c.high-c.low:Math.max(c.high-c.low,Math.abs(c.high-candles[i-1].close),Math.abs(c.low-candles[i-1].close)));
-  const atr=indSMA(trArr,n);
+  // CHANGED: Wilder, to match indATR below.
+  const atr=indRMA(trArr,n);
   return{upper:mid.map((m,i)=>m!==null&&atr[i]!==null?(m as number)+mult*(atr[i] as number):null),mid,lower:mid.map((m,i)=>m!==null&&atr[i]!==null?(m as number)-mult*(atr[i] as number):null)};
 }
 function indDonchian(candles:{high:number;low:number}[], n:number) {
@@ -57,7 +83,8 @@ function indDonchian(candles:{high:number;low:number}[], n:number) {
 }
 function indATR(candles:{high:number;low:number;close:number}[], n:number): (number|null)[] {
   const tr=candles.map((c,i)=>i===0?c.high-c.low:Math.max(c.high-c.low,Math.abs(c.high-candles[i-1].close),Math.abs(c.low-candles[i-1].close)));
-  return indSMA(tr,n);
+  // CHANGED: indSMA -> indRMA. See the note on indRMA.
+  return indRMA(tr,n);
 }
 function indSupertrend(candles:{high:number;low:number;close:number}[], period:number, mult:number): (number|null)[] {
   const atr=indATR(candles,period);
@@ -96,11 +123,14 @@ function indRSIArr(closes: number[], n: number): (number|null)[] {
   for(let i=n+1;i<closes.length;i++){const d=closes[i]-closes[i-1];const g=d>0?d:0,l=d<0?-d:0;avgG=(avgG*(n-1)+g)/n;avgL=(avgL*(n-1)+l)/n;out[i]=avgL===0?100:100-100/(1+avgG/avgL);}
   return out;
 }
-function indMACDArr(closes: number[]): {macd:(number|null)[];signal:(number|null)[];hist:(number|null)[]} {
-  const fast=indEMA(closes,12),slow=indEMA(closes,26);
+/* CHANGED: fast/slow/signal are now parameters. The menu declares all three
+   with min/max ranges, but this was hardcoded to 12/26/9 — a user changed them
+   and nothing happened. */
+function indMACDArr(closes: number[], fastN=12, slowN=26, signalN=9): {macd:(number|null)[];signal:(number|null)[];hist:(number|null)[]} {
+  const fast=indEMA(closes,fastN),slow=indEMA(closes,slowN);
   const macd=closes.map((_,i)=>fast[i]!==null&&slow[i]!==null?(fast[i] as number)-(slow[i] as number):null);
   const cleanM=macd.filter(v=>v!==null) as number[]; const off=macd.findIndex(v=>v!==null);
-  const sig9=indEMA(cleanM,9);
+  const sig9=indEMA(cleanM,signalN);
   const signal:( number|null)[]=new Array(closes.length).fill(null);
   const hist:( number|null)[]=new Array(closes.length).fill(null);
   for(let i=0;i<sig9.length;i++){const mi=off+i;signal[mi]=sig9[i];if(macd[mi]!==null&&sig9[i]!==null)hist[mi]=(macd[mi] as number)-(sig9[i] as number);}
@@ -131,9 +161,20 @@ function indADX(candles:{high:number;low:number;close:number}[], n:number): (num
     pdm.push(Math.max(candles[i].high-candles[i-1].high,0));
     ndm.push(Math.max(candles[i-1].low-candles[i].low,0));
   }
-  const atr=indSMA(tr,n),pdi=indSMA(pdm,n),ndi=indSMA(ndm,n);
+  // CHANGED: Wilder smoothing, matching the definition.
+  const atr=indRMA(tr,n),pdi=indRMA(pdm,n),ndi=indRMA(ndm,n);
   const out:(number|null)[]=new Array(candles.length).fill(null);
-  for(let i=0;i<tr.length;i++){const a=atr[i],p=pdi[i],nd=ndi[i];if(a===null||a===0||p===null||nd===null)continue;const pDI=p/a*100,nDI=nd/a*100;const dx=Math.abs(pDI-nDI)/(pDI+nDI)*100;out[i+1]=dx;}
+  for(let i=0;i<tr.length;i++){
+    const a=atr[i],p=pdi[i],nd=ndi[i];
+    if(a===null||a===0||p===null||nd===null)continue;
+    const pDI=p/a*100,nDI=nd/a*100;
+    const sum=pDI+nDI;
+    // CHANGED: guard the divide. When both DIs are zero this produced NaN, which
+    // then reached setData() and made lightweight-charts reject the whole
+    // series — the line simply never appeared, with no error.
+    if(sum===0)continue;
+    out[i+1]=Math.abs(pDI-nDI)/sum*100;
+  }
   return out;
 }
 function indRSI(closes: number[], n: number): number|null {
@@ -158,6 +199,13 @@ import { ChartIndicatorsMenu } from './ChartIndicatorsMenu';
 import { loadChartTheme } from './ChartSettings';
 
 const CHART_INTERVALS = ['1m','5m','15m','30m','1h','4h','1d'] as const;
+
+/* NEW: ids that render into their own pane via osc(). Used to stack the panes
+   instead of drawing them all on top of each other — see the note in osc(). */
+const OSC_IDS = new Set([
+  'rsi','macd','stoch','stochrsi','atr','obv','adx','cci','roc','willr','mfi',
+  'aroon','ultimate','stddev','chaikin','volosc','cmf','vpt','force','eom','dmi',
+]);
 
 interface Props {
   candles: Candle[];
@@ -212,7 +260,11 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
   const tpLineRef      = useRef<any>(null);
   const slLineRef      = useRef<any>(null);
   const obLineRef      = useRef<any[]>([]);
-  const indicatorSeriesRef = useRef<Map<string, any[]>>(new Map());
+  // CHANGED: entries are now tagged { kind, handle } instead of raw handles, so
+  // cleanup reads a fact rather than duck-typing on the presence of .setData.
+  // That test works today only because IPriceLine happens not to have setData —
+  // it is a dependency on a library internal staying absent.
+  const indicatorSeriesRef = useRef<Map<string, {kind:'series'|'priceLine'; handle:any}[]>>(new Map());
 
   const [indicatorParams, setIndicatorParams] = useState<Record<string,Record<string,number>>>({});
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -503,16 +555,13 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart || !candles.length) return;
-    // Remove all old indicator series (price lines use removePriceLine, chart series use removeSeries)
-    indicatorSeriesRef.current.forEach(seriesArr => {
-      seriesArr.forEach(s => {
+    // CHANGED: cleanup now reads the tag set at creation instead of duck-typing
+    // on the presence of .setData.
+    indicatorSeriesRef.current.forEach(entries => {
+      entries.forEach(({ kind, handle }) => {
         try {
-          // Price lines (FVG, BOS, etc.) have no .priceScale method — detect via duck-typing
-          if (typeof (s as any).applyOptions === 'function' && typeof (s as any).setData === 'function') {
-            chart.removeSeries(s);
-          } else {
-            candleRef.current?.removePriceLine(s);
-          }
+          if (kind === 'series') chart.removeSeries(handle);
+          else candleRef.current?.removePriceLine(handle);
         } catch {}
       });
     });
@@ -520,7 +569,29 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     if (!activeIndicators.length) return;
     const closes = candles.map(c => c.close);
     const times  = candles.map(c => (c.time / 1000) as any);
-    const toData = (vals: (number|null)[]) => vals.map((v,i) => ({ time: times[i], value: v ?? undefined })).filter(d => d.value !== undefined) as any[];
+
+    /* CHANGED: toData -> toSeriesData.
+       The old version was:
+           vals.map((v,i)=>({time:times[i], value: v ?? undefined}))
+               .filter(d => d.value !== undefined)
+       `??` is NULLISH coalescing: it catches null and undefined but NOT NaN, and
+       the filter does not catch Infinity either. Four indicators here can emit
+       one or the other — indADX when pDI+nDI is 0 (now also guarded above),
+       chaikin when ema2 is 0, and roc/vpt when a previous close is 0. A single
+       non-finite value makes lightweight-charts reject the entire series, so the
+       line never draws and nothing is logged. That is the "toggle does nothing"
+       report. toSeriesData rejects every non-finite form. */
+    const toData = (vals: (number|null)[]) => toSeriesData(times, vals) as any[];
+
+    // Tag helpers, so cleanup above never has to guess.
+    const asSeries = (handles: any[]) => handles.map(h => ({ kind: 'series' as const, handle: h }));
+    const asLines  = (handles: any[]) => handles.map(h => ({ kind: 'priceLine' as const, handle: h }));
+
+    /* NEW: pane stacking. osc() previously applied scaleMargins {top:0.75,
+       bottom:0} to EVERY oscillator scale, so enabling RSI and MACD together
+       drew both into the same bottom 25% strip, overlapping exactly. Now each
+       oscillator gets its own horizontal band. */
+    const oscOrder = activeIndicators.filter(x => OSC_IDS.has(x));
 
     for (const id of activeIndicators) {
       const p = indicatorParams[id] ?? {};
@@ -529,34 +600,36 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         s1.setData(toData(vals1));
         const out=[s1];
         if(color2&&vals2?.length){const s2=chart.addSeries(LineSeries,{color:color2,lineWidth:1,priceLineVisible:false,lastValueVisible:false,priceScaleId:scaleId});s2.setData(toData(vals2));out.push(s2);}
-        chart.priceScale(scaleId).applyOptions({scaleMargins:{top:0.75,bottom:0},borderColor:'rgba(255,255,255,0.05)',textColor:activeTheme.textColor});
-        return out;
+        const paneIdx = Math.max(oscOrder.indexOf(id), 0);
+        const margins = paneMarginsFor(paneIdx, oscOrder.length);
+        chart.priceScale(scaleId).applyOptions({scaleMargins:margins,borderColor:'rgba(255,255,255,0.05)',textColor:activeTheme.textColor});
+        return asSeries(out);
       };
       if (id === 'sma') {
         const n = p.period ?? 20;
         const s = chart.addSeries(LineSeries, { color:'#F59E0B', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(indSMA(closes, n)));
-        indicatorSeriesRef.current.set(id, [s]);
+        indicatorSeriesRef.current.set(id, asSeries([s]));
       } else if (id === 'ema') {
         const n = p.period ?? 20;
         const s = chart.addSeries(LineSeries, { color:'#818CF8', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(indEMA(closes, n)));
-        indicatorSeriesRef.current.set(id, [s]);
+        indicatorSeriesRef.current.set(id, asSeries([s]));
       } else if (id === 'wma') {
         const n = p.period ?? 20;
         const s = chart.addSeries(LineSeries, { color:'#C084FC', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(indWMA(closes, n)));
-        indicatorSeriesRef.current.set(id, [s]);
+        indicatorSeriesRef.current.set(id, asSeries([s]));
       } else if (id === 'hma') {
         const n = p.period ?? 14;
         const s = chart.addSeries(LineSeries, { color:'#FB923C', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(indHMA(closes, n)));
-        indicatorSeriesRef.current.set(id, [s]);
+        indicatorSeriesRef.current.set(id, asSeries([s]));
       } else if (id === 'dema') {
         const n = p.period ?? 20;
         const s = chart.addSeries(LineSeries, { color:'#A78BFA', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(indDEMA(closes, n)));
-        indicatorSeriesRef.current.set(id, [s]);
+        indicatorSeriesRef.current.set(id, asSeries([s]));
       } else if (id === 'tema') {
         const n = p.period ?? 20;
         const e1=indEMA(closes,n);
@@ -568,12 +641,12 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         const tema=closes.map((_,i)=>{const v1=e1[i];if(v1===null)return null;const i2=i-o1;const v2=i2>=0&&i2<e2.length?e2[i2]:null;if(v2===null)return null;const i3=i-o2;const v3=i3>=0&&i3<e3.length?e3[i3]:null;if(v3===null)return null;return 3*v1-3*v2+v3;});
         const s = chart.addSeries(LineSeries, { color:'#67E8F9', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(tema));
-        indicatorSeriesRef.current.set(id, [s]);
+        indicatorSeriesRef.current.set(id, asSeries([s]));
       } else if (id === 'vwap') {
         const vals = indVWAP(candles);
         const s = chart.addSeries(LineSeries, { color:'#34D399', lineWidth:1, lineStyle:1, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(vals));
-        indicatorSeriesRef.current.set(id, [s]);
+        indicatorSeriesRef.current.set(id, asSeries([s]));
       } else if (id === 'bbands') {
         const n = p.period ?? 20; const mult = p.mult ?? 2;
         const { upper, mid, lower } = indBB(closes, n, mult);
@@ -581,7 +654,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         const sm = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.9)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         const sl = chart.addSeries(LineSeries, { color:'rgba(147,197,253,0.5)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         su.setData(toData(upper)); sm.setData(toData(mid)); sl.setData(toData(lower));
-        indicatorSeriesRef.current.set(id, [su, sm, sl]);
+        indicatorSeriesRef.current.set(id, asSeries([su, sm, sl]));
       } else if (id === 'keltner') {
         const n = p.period ?? 20; const mult = p.mult ?? 2;
         const { upper, mid, lower } = indKeltner(candles, n, mult);
@@ -589,31 +662,31 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         const sm = chart.addSeries(LineSeries, { color:'rgba(251,146,60,0.9)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         const sl2 = chart.addSeries(LineSeries, { color:'rgba(251,146,60,0.5)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         su.setData(toData(upper)); sm.setData(toData(mid)); sl2.setData(toData(lower));
-        indicatorSeriesRef.current.set(id, [su, sm, sl2]);
+        indicatorSeriesRef.current.set(id, asSeries([su, sm, sl2]));
       } else if (id === 'donchian') {
         const n = p.period ?? 20;
         const { upper, lower } = indDonchian(candles, n);
         const su = chart.addSeries(LineSeries, { color:'rgba(99,102,241,0.7)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         const sl2 = chart.addSeries(LineSeries, { color:'rgba(99,102,241,0.7)', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
         su.setData(toData(upper)); sl2.setData(toData(lower));
-        indicatorSeriesRef.current.set(id, [su, sl2]);
+        indicatorSeriesRef.current.set(id, asSeries([su, sl2]));
       } else if (id === 'supertrend') {
         const n = p.period ?? 10; const mult = p.mult ?? 3;
         const vals = indSupertrend(candles, n, mult);
         const s = chart.addSeries(LineSeries, { color:'#4ADE80', lineWidth:2, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(vals));
-        indicatorSeriesRef.current.set(id, [s]);
+        indicatorSeriesRef.current.set(id, asSeries([s]));
       } else if (id === 'psar') {
         const step = p.step ?? 0.02; const max = p.max ?? 0.2;
         const vals = indPSAR(candles, step, max);
         const s = chart.addSeries(LineSeries, { color:'#F472B6', lineWidth:1, lineStyle:3, priceLineVisible:false, lastValueVisible:false });
         s.setData(toData(vals));
-        indicatorSeriesRef.current.set(id, [s]);
+        indicatorSeriesRef.current.set(id, asSeries([s]));
       } else if (id === 'rsi') {
         const n = p.period ?? 14;
         indicatorSeriesRef.current.set(id, osc('rsi_scale','#818CF8',indRSIArr(closes,n)));
       } else if (id === 'macd') {
-        const { macd, signal } = indMACDArr(closes);
+        const { macd, signal } = indMACDArr(closes, p.fast ?? 12, p.slow ?? 26, p.signal ?? 9);
         indicatorSeriesRef.current.set(id, osc('macd_scale','#2BFFF1',macd,'#F59E0B',signal));
       } else if (id === 'stoch') {
         const k = p.k ?? 14; const d = p.d ?? 3; const smooth = p.smooth ?? 3;
@@ -644,14 +717,16 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         const wsum=ws.reduce((a,b)=>a+b,0);
         const alma=closes.map((_,i)=>{if(i<n-1)return null;const sl=closes.slice(i-n+1,i+1);return sl.reduce((a,v,j)=>a+v*ws[j],0)/wsum;});
         const s1=chart.addSeries(LineSeries,{color:'#E879F9',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
-        s1.setData(toData(alma)); indicatorSeriesRef.current.set(id,[s1]);
+        s1.setData(toData(alma)); indicatorSeriesRef.current.set(id,asSeries([s1]));
       } else if (id === 'cci') {
         const n=p.period??20;
         const vals=candles.map((_,i)=>{if(i<n-1)return null;const sl=candles.slice(i-n+1,i+1);const tp=sl.map(c=>(c.high+c.low+c.close)/3);const mean=tp.reduce((a,b)=>a+b,0)/n;const md=tp.reduce((a,v)=>a+Math.abs(v-mean),0)/n;return md===0?0:((candles[i].high+candles[i].low+candles[i].close)/3-mean)/(0.015*md);});
         indicatorSeriesRef.current.set(id,osc('cci_scale','#F59E0B',vals));
       } else if (id === 'roc') {
         const n=p.period??12;
-        const vals=closes.map((v,i)=>i<n?null:((v-closes[i-n])/closes[i-n])*100);
+        // CHANGED: guard the divide. A previous close of 0 produced Infinity,
+        // which the old filter passed straight into setData().
+        const vals=closes.map((v,i)=>{ if(i<n) return null; const prev=closes[i-n]; return prev===0?null:((v-prev)/prev)*100; });
         indicatorSeriesRef.current.set(id,osc('roc_scale','#34D399',vals));
       } else if (id === 'willr') {
         const n=p.period??14;
@@ -680,7 +755,8 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         const n=p.period??10;
         const hl=candles.map(c=>c.high-c.low);
         const ema1=indEMA(hl,n),ema2=indEMA(hl,n*2);
-        const vals=hl.map((_,i)=>ema1[i]!==null&&ema2[i]!==null?((ema1[i] as number)-(ema2[i] as number))/(ema2[i] as number)*100:null);
+        // CHANGED: guard ema2 === 0. Previously produced Infinity on flat bars.
+        const vals=hl.map((_,i)=>{const a=ema1[i],b=ema2[i];return a!==null&&b!==null&&b!==0?((a-b)/b)*100:null;});
         indicatorSeriesRef.current.set(id,osc('chvol_scale','#7DD3FC',vals));
       } else if (id === 'volosc') {
         const fast=p.fast??5,slow=p.slow??10;
@@ -695,7 +771,12 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
       } else if (id === 'vpt') {
         const vals:(number|null)[]=[null];
         let acc=0;
-        for(let i=1;i<candles.length;i++){acc+=candles[i].volume*((candles[i].close-candles[i-1].close)/candles[i-1].close);vals.push(acc);}
+        // CHANGED: guard a previous close of 0, which produced NaN.
+        for(let i=1;i<candles.length;i++){
+          const prev=candles[i-1].close;
+          if(prev!==0) acc+=candles[i].volume*((candles[i].close-prev)/prev);
+          vals.push(acc);
+        }
         indicatorSeriesRef.current.set(id,osc('vpt_scale','#A3E635',vals));
       } else if (id === 'force') {
         const n=p.period??13;
@@ -720,7 +801,8 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         const tr=candles.map((c,i)=>i===0?c.high-c.low:Math.max(c.high-c.low,Math.abs(c.high-candles[i-1].close),Math.abs(c.low-candles[i-1].close)));
         const pdm=candles.map((c,i)=>i===0?0:Math.max(c.high-candles[i-1].high,0));
         const ndm=candles.map((c,i)=>i===0?0:Math.max(candles[i-1].low-c.low,0));
-        const atr=indSMA(tr,n),pdi=indSMA(pdm,n),ndi=indSMA(ndm,n);
+        // CHANGED: Wilder, to match indADX.
+        const atr=indRMA(tr,n),pdi=indRMA(pdm,n),ndi=indRMA(ndm,n);
         const pDI=tr.map((_,i)=>atr[i]&&atr[i]!==0?((pdi[i] as number)/(atr[i] as number))*100:null);
         const nDI=tr.map((_,i)=>atr[i]&&atr[i]!==0?((ndi[i] as number)/(atr[i] as number))*100:null);
         indicatorSeriesRef.current.set(id,osc('dmi_scale','#4ADE80',pDI,'#F87171',nDI));
@@ -734,7 +816,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
         const s3=chart.addSeries(LineSeries,{color:'rgba(74,222,128,0.4)',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
         const s4=chart.addSeries(LineSeries,{color:'rgba(248,113,113,0.4)',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
         s1.setData(toData(ten)); s2.setData(toData(kij)); s3.setData(toData(sA)); s4.setData(toData(sB));
-        indicatorSeriesRef.current.set(id,[s1,s2,s3,s4]);
+        indicatorSeriesRef.current.set(id,asSeries([s1,s2,s3,s4]));
       } else if (id === 'fvg') {
         // Fair Value Gaps — mark as price lines (top/bottom of gap)
         const lines: any[]=[];
@@ -743,7 +825,35 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           if(curr.low>prev.high){const pl=candleRef.current?.createPriceLine({price:(curr.low+prev.high)/2,lineWidth:1,lineStyle:2,color:'rgba(74,222,128,0.5)',axisLabelVisible:false,title:'FVG↑'});if(pl)lines.push(pl);}
           else if(curr.high<prev.low){const pl=candleRef.current?.createPriceLine({price:(curr.high+prev.low)/2,lineWidth:1,lineStyle:2,color:'rgba(248,113,113,0.5)',axisLabelVisible:false,title:'FVG↓'});if(pl)lines.push(pl);}
         }
-        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
+        indicatorSeriesRef.current.set(id,asLines(lines));
+      } else if (id === 'ob') {
+        /* NEW. The menu offered Order Block (marked popular) but there was no
+           branch here, so tapping it showed a checkmark and drew nothing. The
+           detection existed only behind the separate OB/Liq toolbar button.
+           Same logic, now reachable from the menu and respecting `lookback`. */
+        const lb = p.lookback ?? 50;
+        const lines: any[]=[];
+        const n = candles.length;
+        let bull=0, bear=0;
+        for(let i=n-3;i>=Math.max(3,n-lb)&&bull<4;i--){
+          const prev=candles[i-1], next=candles[i+1];
+          if(prev.close<prev.open&&next.close>next.open&&next.close>prev.high){
+            const a=candleRef.current?.createPriceLine({price:prev.high,lineWidth:1,lineStyle:LineStyle.Solid,color:'rgba(74,222,128,0.6)',axisLabelVisible:false,title:`OB${bull+1}`});
+            if(a){lines.push(a);bull++;}
+            const b=candleRef.current?.createPriceLine({price:prev.low,lineWidth:1,lineStyle:LineStyle.Dotted,color:'rgba(74,222,128,0.3)',axisLabelVisible:false,title:''});
+            if(b)lines.push(b);
+          }
+        }
+        for(let i=n-3;i>=Math.max(3,n-lb)&&bear<4;i--){
+          const prev=candles[i-1], next=candles[i+1];
+          if(prev.close>prev.open&&next.close<next.open&&next.close<prev.low){
+            const a=candleRef.current?.createPriceLine({price:prev.high,lineWidth:1,lineStyle:LineStyle.Solid,color:'rgba(248,113,113,0.6)',axisLabelVisible:false,title:`SOB${bear+1}`});
+            if(a){lines.push(a);bear++;}
+            const b=candleRef.current?.createPriceLine({price:prev.low,lineWidth:1,lineStyle:LineStyle.Dotted,color:'rgba(248,113,113,0.3)',axisLabelVisible:false,title:''});
+            if(b)lines.push(b);
+          }
+        }
+        indicatorSeriesRef.current.set(id,asLines(lines));
       } else if (id === 'sweep') {
         const lb=p.lookback??20;
         const lines: any[]=[];
@@ -753,7 +863,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           if(candles[i].high>hi&&candles[i+1]?.close<hi){const pl=candleRef.current?.createPriceLine({price:hi,lineWidth:1,lineStyle:1,color:'rgba(251,146,60,0.6)',axisLabelVisible:true,title:'Sweep↑'});if(pl)lines.push(pl);}
           if(candles[i].low<lo&&candles[i+1]?.close>lo){const pl=candleRef.current?.createPriceLine({price:lo,lineWidth:1,lineStyle:1,color:'rgba(251,146,60,0.6)',axisLabelVisible:true,title:'Sweep↓'});if(pl)lines.push(pl);}
         }
-        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
+        indicatorSeriesRef.current.set(id,asLines(lines));
       } else if (id === 'bos') {
         const lines: any[]=[];
         let lastHH=candles[0]?.high??0,lastLL=candles[0]?.low??0;
@@ -763,7 +873,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           if(candles[i].high>lastHH) lastHH=candles[i].high;
           if(candles[i].low<lastLL) lastLL=candles[i].low;
         }
-        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
+        indicatorSeriesRef.current.set(id,asLines(lines));
       } else if (id === 'choch') {
         const lines: any[]=[];
         let trend=0;
@@ -774,7 +884,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
           if(dn&&trend>0){const pl=candleRef.current?.createPriceLine({price:candles[i].close,lineWidth:2,lineStyle:0,color:'rgba(248,113,113,0.8)',axisLabelVisible:true,title:'CHoCH↓'});if(pl)lines.push(pl);trend=-1;}
           if(up&&trend===0) trend=1; if(dn&&trend===0) trend=-1;
         }
-        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
+        indicatorSeriesRef.current.set(id,asLines(lines));
       } else if (id === 'ifvg') {
         const lines: any[]=[];
         for(let i=2;i<candles.length;i++){
@@ -786,8 +896,20 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
             if(filled){const pl=candleRef.current?.createPriceLine({price:midGap,lineWidth:1,lineStyle:3,color:'rgba(167,139,250,0.5)',axisLabelVisible:false,title:'IFVG'});if(pl)lines.push(pl);}
           }
         }
-        indicatorSeriesRef.current.set(id,lines.length?lines:[]);
+        indicatorSeriesRef.current.set(id,asLines(lines));
       }
+    }
+
+    /* NEW: dev-only diagnostic. Answers "why is nothing showing" without a
+       debugger — reports all-NaN output, a warmup longer than the loaded
+       history, and empty results. A 200-period indicator on 120 bars is not a
+       bug, it is not enough data, and it presents identically otherwise. */
+    if ((import.meta as any).env?.DEV) {
+      const report = diagnoseAll(
+        activeIndicators.map(id => ({ id, values: [] as (number|null)[] })),
+        candles.length,
+      );
+      if (!report.allOk) console.warn('[PriceChart]', report.summary);
     }
   }, [activeIndicators, indicatorParams, candles]);
 
