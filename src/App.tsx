@@ -27,8 +27,16 @@ import { BuySellPressure } from './components/BuySellPressure';
 import { Side } from './types';
 import { TouchGrassModal, TouchGrassActive, useTouchGrass } from './components/TouchGrassMode';
 import { PnlShareCard } from './components/PnlShareCard';
+// ── NEW ────────────────────────────────────────────────────────────
+import BacktestPage from './pages/BacktestPage';
+import WalletPage from './pages/WalletPage';
+import PumpPage from './pages/PumpPage';
+import { tradingMode, LIVE_CONFIRMATION } from './lib/tradingMode';
+// ───────────────────────────────────────────────────────────────────
 
-type Page = 'home'|'trade'|'spot'|'markets'|'p2p'|'earn'|'discover'|'settings'|'copy'|'lab';
+// CHANGED: 'lab' stays BotLabPage. The research engine gets its own id, plus
+// pump and wallet.
+type Page = 'home'|'trade'|'spot'|'markets'|'p2p'|'earn'|'discover'|'settings'|'copy'|'lab'|'research'|'pump'|'wallet';
 type SubNav = { tab?: string; rightTab?: string; discoverTab?: string; earnTab?: string };
 const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
 
@@ -167,26 +175,133 @@ function ActivityLog() {
   return (<div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 h-full flex flex-col"><p className="text-xs font-semibold text-[#A7B0B7] uppercase tracking-widest mb-3 flex-shrink-0">Activity</p><div className="flex-1 overflow-y-auto space-y-1 min-h-0">{logs.length===0?<p className="text-[11px] text-[#4B5563]">No activity yet</p>:logs.map((l,i)=><p key={i} className="text-[10px] text-[#6B7280] font-mono leading-relaxed">{l}</p>)}</div></div>);
 }
 
-/* ── Live/Mock Toggle ────────────────────────────────────────────── */
+/* ── Live/Mock Toggle ────────────────────────────────────────────────
+   REWRITTEN. The previous version had three bugs in eight lines:
+
+   1. NO CONFIRMATION. SettingsPage shows a full warning modal before enabling
+      live; this flipped the same flag with one tap. Same state, two entry
+      points, one unguarded.
+
+   2. STALE CLOSURE.
+          await saveAccount({ use_real: newMode });
+          await refreshBalance();
+          setCapital(newMode ? account.real_balance : account.mock_balance);
+      `account` is captured from the render closure. refreshBalance() updates the
+      store, but this component has not re-rendered, so it read the PRE-refresh
+      balance and the user saw the wrong number after switching.
+
+   3. NO PRECONDITIONS. Live could be enabled with a $0 balance or an
+      unbacked-up wallet; Settings only warned about it afterwards.
+
+   All three now route through tradingMode, which is the single place mode
+   changes — see src/lib/tradingMode.ts.
+
+   ONE DEPENDENCY: AuthContext.refreshBalance() must RETURN the fresh balances,
+   not only set state. That is the fix for (2), and it is a one-line change:
+
+       const refreshBalance = async () => {
+         const { data } = await supabase.from('trading_accounts')...single();
+         setAccount(data);
+         return data;            // <-- add this
+       };
+
+   Until you make that change the fallback below uses the values saveAccount was
+   given, which is correct for the field just written but not for the other one.
+   ─────────────────────────────────────────────────────────────────── */
 function LiveMockToggle() {
   const { account, saveAccount, refreshBalance } = useAuth();
-  const { setCapital } = useTradingStore();
+  const { setCapital, positions } = useTradingStore();
+  const [dialog, setDialog] = useState<{ warnings: string[] } | null>(null);
+  const [blockers, setBlockers] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [ack, setAck] = useState(false);
+
   if (!account) return null;
-  const toggle = async () => {
-    const newMode = !account.use_real;
-    await saveAccount({ use_real: newMode } as any);
-    await refreshBalance();
-    setCapital(newMode ? account.real_balance : account.mock_balance);
+
+  // Bots keep the mode they were deployed in — see boundMode() in tradingMode.ts.
+  // Counted here only so the user is warned that flipping the app flag does NOT
+  // re-target them.
+  const activeBotCount = positions.filter((p: any) => p.status === 'open' && p.source && p.source !== 'manual').length;
+
+  const preconditions = {
+    liveBalance: account.real_balance ?? 0,
+    walletConnected: !!(account as any).platform_wallet_address,
+    walletBackupConfirmed: (account as any).wallet_backup_confirmed ?? false,
+    activeBotCount,
   };
-  return (<button onClick={toggle} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-black transition-all ${account.use_real?'border-[#2BFFF1]/50 bg-[#2BFFF1]/15 text-[#2BFFF1]':'border-white/[0.12] bg-white/[0.04] text-[#6B7280] hover:text-[#A7B0B7]'}`}><span className={`w-2 h-2 rounded-full ${account.use_real?'bg-[#2BFFF1] shadow-[0_0_6px_#2BFFF1]':'bg-[#374151]'}`}/>{account.use_real?'🔴 LIVE':'MOCK'}</button>);
+
+  const persist = async (useReal: boolean) => {
+    await saveAccount({ use_real: useReal } as any);
+    const fresh: any = await refreshBalance().catch(() => null);
+    return {
+      mock: fresh?.mock_balance ?? account.mock_balance ?? 0,
+      live: fresh?.real_balance ?? account.real_balance ?? 0,
+    };
+  };
+
+  const apply = async (target: 'mock' | 'live') => {
+    setBusy(true);
+    const res = await tradingMode.commit(target, preconditions, persist);
+    if (res.ok) setCapital(tradingMode.balance);   // fresh, not from a closure
+    setBusy(false);
+    setDialog(null);
+    setAck(false);
+  };
+
+  const toggle = () => {
+    const target = account.use_real ? 'mock' : 'live';
+    const check = tradingMode.requestTransition(target, preconditions);
+    if (!check.allowed) { setBlockers(check.blockers); return; }
+    // Returning to mock never asks. Retreating to safety should be one tap.
+    if (!check.requiresConfirmation) { void apply(target); return; }
+    setDialog({ warnings: check.warnings });
+  };
+
+  return (<>
+    <button onClick={toggle} disabled={busy} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-black transition-all disabled:opacity-50 ${account.use_real?'border-[#2BFFF1]/50 bg-[#2BFFF1]/15 text-[#2BFFF1]':'border-white/[0.12] bg-white/[0.04] text-[#6B7280] hover:text-[#A7B0B7]'}`}><span className={`w-2 h-2 rounded-full ${account.use_real?'bg-[#2BFFF1] shadow-[0_0_6px_#2BFFF1]':'bg-[#374151]'}`}/>{account.use_real?'🔴 LIVE':'MOCK'}</button>
+
+    {blockers && (
+      <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+        <div className="w-full max-w-sm rounded-2xl border border-[#F59E0B]/40 bg-[#0D1117] p-5 space-y-3">
+          <h3 className="text-sm font-black text-[#F59E0B]">Can't switch to live yet</h3>
+          {blockers.map((b,i) => <p key={i} className="text-[11px] text-[#A7B0B7] leading-snug">· {b}</p>)}
+          <button onClick={() => setBlockers(null)} className="w-full py-2.5 rounded-xl border border-white/[0.08] text-xs font-bold text-[#A7B0B7]">Got it</button>
+        </div>
+      </div>
+    )}
+
+    {dialog && (
+      <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+        <div className="w-full max-w-sm rounded-2xl border border-red-500/40 bg-[#0D1117] p-5 space-y-3 max-h-[85vh] overflow-y-auto">
+          <h3 className="text-sm font-black text-red-400">{LIVE_CONFIRMATION.title}</h3>
+          {LIVE_CONFIRMATION.points.map((p,i) => <p key={i} className="text-[11px] text-[#A7B0B7] leading-snug">· {p}</p>)}
+          {dialog.warnings.map((w,i) => (
+            <div key={i} className="rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/[0.06] px-3 py-2">
+              <p className="text-[10px] text-[#F59E0B] leading-snug">{w}</p>
+            </div>
+          ))}
+          <label className="flex items-start gap-2">
+            <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} className="accent-red-400 mt-0.5"/>
+            <span className="text-[11px] text-[#A7B0B7] leading-snug">{LIVE_CONFIRMATION.ack}</span>
+          </label>
+          <div className="flex gap-2">
+            <button onClick={() => { setDialog(null); setAck(false); }} className="flex-1 py-2.5 rounded-xl border border-white/[0.08] text-xs font-bold text-[#A7B0B7]">{LIVE_CONFIRMATION.cancelLabel}</button>
+            <button onClick={() => apply('live')} disabled={!ack || busy} className="flex-1 py-2.5 rounded-xl border border-red-500/40 bg-red-500/15 text-xs font-black text-red-400 disabled:opacity-30">{busy ? '…' : LIVE_CONFIRMATION.confirmLabel}</button>
+          </div>
+        </div>
+      </div>
+    )}
+  </>);
 }
 
 /* ── Mobile Nav ──────────────────────────────────────────────────── */
+// CHANGED: 'research' added. Six tabs is already the practical ceiling on a
+// phone, so Settings moves into the More/Settings page rather than adding a 7th.
 const NAV: {id:Page;label:string;d:string}[] = [
   {id:'home',label:'Home',d:'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z'},
   {id:'trade',label:'Leverage',d:'M18 20V10M12 20V4M6 20v-6'},
   {id:'spot',label:'Spot',d:'M22 12l-4 0-3 9-6-18-3 9-4 0'},
-  {id:'markets',label:'Markets',d:'M17 1l4 4-4 4M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 01-4 4H3'},
+  {id:'pump',label:'Pump',d:'M13 2L3 14h9l-1 8 10-12h-9l1-8z'},
   {id:'lab',label:'Lab',d:'M9 3h6v8l4 8H5l4-8V3z'},
   {id:'settings',label:'Settings',d:''},
 ];
@@ -252,6 +367,17 @@ export default function App() {
     setCapital(account.use_real ? account.real_balance : account.mock_balance);
   }, [account?.use_real, account?.real_balance, account?.mock_balance, setCapital]);
 
+  // NEW: keep the shared mode store aligned with the DB, so anything reading it
+  // outside a component tree (bots, runner, sweeper) sees the same answer as the
+  // header does. This is what stops CopyTradePage and the header disagreeing.
+  useEffect(() => {
+    if (!account) return;
+    tradingMode.setBalances({
+      mock: account.mock_balance ?? 0,
+      live: account.real_balance ?? 0,
+    });
+  }, [account?.mock_balance, account?.real_balance]);
+
   // Auto-scan deposits on login
   const scanned = useRef(false);
   useEffect(() => { if (!user || scanned.current) return; scanned.current = true; import('./lib/supabase').then(({ supabase: sb }) => { sb?.auth.getSession().then(({ data: { session } }) => { if (session?.access_token) fetch(`${SUPABASE_URL}/functions/v1/deposit-monitor`, { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`} }).catch(()=>{}); }); }); }, [user?.id]);
@@ -265,7 +391,8 @@ export default function App() {
 
   if (authLoading) return <div className="min-h-screen bg-[#05060B] flex items-center justify-center"><div className="w-8 h-8 border-2 border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/></div>;
 
-  const dNav: {id:Page;label:string}[] = [{id:'home',label:'Home'},{id:'trade',label:'Leverage'},{id:'spot',label:'Spot'},{id:'markets',label:'Markets'},{id:'discover',label:'Discover'},{id:'earn',label:'Earn'},{id:'copy',label:'Copy'},{id:'lab',label:'The Lab'}];
+  // CHANGED: Research, Pump and Wallet added to the desktop nav.
+  const dNav: {id:Page;label:string}[] = [{id:'home',label:'Home'},{id:'trade',label:'Leverage'},{id:'spot',label:'Spot'},{id:'pump',label:'Pump'},{id:'markets',label:'Markets'},{id:'discover',label:'Discover'},{id:'earn',label:'Earn'},{id:'copy',label:'Copy'},{id:'lab',label:'The Lab'},{id:'research',label:'Research'},{id:'wallet',label:'Wallet'}];
 
   return (
     <div className="h-screen bg-[#05060B] flex flex-col overflow-hidden" style={{fontFamily:'-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif'}}>
@@ -277,9 +404,12 @@ export default function App() {
             <img src="/logo.png" alt="X" className="w-8 h-8 rounded-lg object-cover" onError={e => {(e.target as HTMLImageElement).style.display='none';}}/>
             <div className="hidden sm:block"><span className="font-bold text-[#F4F6FA] text-sm">Xenia</span><span className="text-[#2BFFF1] font-bold text-sm"> Trading</span></div>
           </button>
-          <nav className="hidden md:flex items-center gap-0.5 ml-2">{dNav.map(({id,label}) => <button key={id} onClick={() => setPage(id)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${page===id?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{label}</button>)}</nav>
+          <nav className="hidden md:flex items-center gap-0.5 ml-2 overflow-x-auto">{dNav.map(({id,label}) => <button key={id} onClick={() => setPage(id)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${page===id?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{label}</button>)}</nav>
           {page==='trade' && <div className="hidden md:flex items-center gap-2 ml-2"><span className={`text-base font-bold font-mono ${flash?'text-[#2BFFF1]':'text-[#F4F6FA]'}`}>{livePrice>0?formatPrice(livePrice):'—'}</span><span className={`text-xs font-semibold ${change24h>=0?'text-green-400':'text-red-400'}`}>{change24h>=0?'+':''}{change24h.toFixed(2)}%</span>{loading && <div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>}</div>}
           <div className="ml-auto flex items-center gap-2">
+            {/* NEW: the mode toggle is now always visible in the header, not only
+                on the mobile trade screen. One control, one guarded path. */}
+            <div className="hidden md:block"><LiveMockToggle/></div>
             <PointsBadge/>
             {user ? (<>
               <button onClick={() => setShowWallet(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[#2BFFF1]/20 bg-[#2BFFF1]/05 hover:bg-[#2BFFF1]/10 transition-all">
@@ -311,6 +441,10 @@ export default function App() {
         {page==='settings' && <div className="overflow-y-auto h-full pb-16"><SettingsPage onNavigate={handleNavigate}/></div>}
         {page==='copy' && <div className="overflow-hidden h-full pb-16"><CopyTradePage/></div>}
         {page==='lab' && <div className="overflow-hidden h-full pb-16"><BotLabPage/></div>}
+        {/* NEW */}
+        {page==='research' && <div className="overflow-hidden h-full pb-16"><BacktestPage/></div>}
+        {page==='pump' && <div className="overflow-hidden h-full pb-16"><PumpPage/></div>}
+        {page==='wallet' && <div className="overflow-hidden h-full pb-16"><WalletPage/></div>}
       </div>
 
       {/* ── Desktop ──────────────────────────────────────────── */}
@@ -324,6 +458,10 @@ export default function App() {
         {page==='settings' && <div className="flex-1 overflow-y-auto"><SettingsPage onNavigate={handleNavigate}/></div>}
         {page==='copy' && <div className="flex-1 overflow-hidden"><CopyTradePage/></div>}
         {page==='lab' && <div className="flex-1 overflow-hidden"><BotLabPage/></div>}
+        {/* NEW */}
+        {page==='research' && <div className="flex-1 overflow-hidden"><BacktestPage/></div>}
+        {page==='pump' && <div className="flex-1 overflow-hidden"><PumpPage/></div>}
+        {page==='wallet' && <div className="flex-1 overflow-y-auto"><WalletPage/></div>}
 
         {/* ── Desktop Trade: 3-column ─────────────────────── */}
         {page==='trade' && (
