@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthContext';
 import { INDICATOR_LIBRARY, CANDLE_PATTERNS, type IndicatorMeta } from '../components/indicators';
+// NEW
+import { tradingMode, boundMode, type TradingMode } from '../lib/tradingMode';
+import { validateBotConfig, summarizeIssues } from '../lib/botConfigValidator';
 
 interface CustomBot {
   id: string; user_id: string; name: string; description: string;
@@ -11,6 +14,11 @@ interface CustomBot {
   entry_rules: any; exit_rules: any; risk_rules: any;
   fee_pct: number; use_count: number; total_fee_earned: number;
   win_rate: number|null; total_pnl: number; created_at: string;
+  /** NEW: the mode this bot was DEPLOYED in. Never derived from the app flag. */
+  deployed_mode?: TradingMode|null;
+  /** NEW: marketplace attribution — see confirmMarketDeploy. */
+  source_bot_id?: string|null;
+  source_author_id?: string|null;
 }
 
 const CATEGORIES = ['Moving Averages','Momentum','Volatility','Volume','Trend','ICT'];
@@ -83,6 +91,10 @@ function IndicatorPicker({ selected, onToggle }:{ selected:{id:string;params:Rec
 // ── Bot card ──────────────────────────────────────────────────────────────
 function BotCard({ bot, onEdit, onActivate, onDelete }:{ bot:CustomBot; onEdit:()=>void; onActivate:()=>void; onDelete:()=>void }) {
   const statusColor = { lab:'#F59E0B', active:'#4ADE80', paused:'#6B7280', archived:'#374151' }[bot.status];
+  // NEW: the bot's own mode, not the app's. boundMode treats a missing binding
+  // as mock — conservative by design, never infer live from missing data.
+  const mode = boundMode(bot);
+  const isDeployed = bot.status === 'active' || bot.status === 'paused';
   return (
     <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 space-y-2.5">
       <div className="flex items-start justify-between">
@@ -90,8 +102,15 @@ function BotCard({ bot, onEdit, onActivate, onDelete }:{ bot:CustomBot; onEdit:(
           <div className="flex items-center gap-2">
             <p className="text-sm font-black text-[#F4F6FA] truncate">{bot.name}</p>
             {bot.is_public&&<span className="text-[8px] px-1.5 py-0.5 rounded-full bg-[#2BFFF1]/10 text-[#2BFFF1] border border-[#2BFFF1]/20 flex-shrink-0">Public</span>}
+            {/* NEW: a deployed bot always shows which funds it is trading. */}
+            {isDeployed&&(
+              <span className={`text-[8px] px-1.5 py-0.5 rounded-full border flex-shrink-0 font-black ${mode==='live'?'bg-red-500/15 text-red-400 border-red-500/30':'bg-white/[0.05] text-[#6B7280] border-white/[0.1]'}`}>
+                {mode==='live'?'● LIVE':'MOCK'}
+              </span>
+            )}
           </div>
           <p className="text-[10px] text-[#4B5563] mt-0.5 truncate">{bot.description||'No description'}</p>
+          {bot.source_bot_id&&<p className="text-[9px] text-[#374151] mt-0.5">From the Bot Market</p>}
         </div>
         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border flex-shrink-0 ml-2" style={{color:statusColor,borderColor:statusColor+'40',background:statusColor+'15'}}>
           {bot.status.charAt(0).toUpperCase()+bot.status.slice(1)}
@@ -110,6 +129,82 @@ function BotCard({ bot, onEdit, onActivate, onDelete }:{ bot:CustomBot; onEdit:(
         {bot.status==='active'&&<button onClick={onActivate} className="flex-1 py-1.5 rounded-xl text-[10px] font-bold bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/20 transition-all">Pause</button>}
         {bot.status==='paused'&&<button onClick={onActivate} className="flex-1 py-1.5 rounded-xl text-[10px] font-bold bg-green-500/10 text-green-400 border border-green-500/20 transition-all">Resume</button>}
         <button onClick={onDelete} className="px-2.5 py-1.5 rounded-xl text-[10px] font-bold text-red-400/60 border border-red-500/15 hover:text-red-400 transition-all">✕</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── NEW: shared deploy picker ────────────────────────────────────────────
+   Both deploy paths used to be near-identical blocks of JSX. They are one
+   component now, so a change to the live warning cannot land on one and miss
+   the other — which is exactly how CopyTradePage ended up with an unguarded
+   route into live mode. */
+function DeployPicker({ botName, mode, verb, issues, onPick, onCancel }:{
+  botName:string; mode:TradingMode; verb:string;
+  issues:string|null;
+  onPick:(target:'spot'|'leverage'|'both')=>void; onCancel:()=>void;
+}) {
+  const [ack, setAck] = useState(false);
+  const needsAck = mode === 'live';
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" onClick={onCancel}>
+      <div className="bg-[#0B0E14] border border-white/[0.1] rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+        <div>
+          <p className="text-sm font-black text-[#F4F6FA]">{verb} "{botName}"</p>
+          <p className="text-[10px] text-[#4B5563] mt-0.5">Choose where this bot will trade</p>
+        </div>
+
+        {/* NEW: mode is decided HERE and stored on the bot. Deploying used to
+            inherit nothing, so a bot ran against whatever the global flag
+            happened to be at execution time. */}
+        <div className={`rounded-xl border px-3 py-2.5 ${mode==='live'?'border-red-500/30 bg-red-500/[0.08]':'border-white/[0.07] bg-white/[0.02]'}`}>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-[#4B5563]">Deploying in</span>
+            <span className={`text-xs font-black ${mode==='live'?'text-red-400':'text-[#6B7280]'}`}>{mode==='live'?'● LIVE':'MOCK'}</span>
+          </div>
+          <p className="text-[9px] text-[#6B7280] mt-1 leading-snug">
+            {mode==='live'
+              ? 'This bot will trade with real funds. It keeps this mode even if you switch the app back to mock — change it by redeploying.'
+              : 'Practice funds. The bot keeps this mode even if you switch the app to live — change it by redeploying.'}
+          </p>
+        </div>
+
+        {issues && (
+          <div className="rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/[0.06] px-3 py-2">
+            <p className="text-[10px] text-[#F59E0B] leading-snug">{issues}</p>
+          </div>
+        )}
+
+        {needsAck && (
+          <label className="flex items-start gap-2">
+            <input type="checkbox" checked={ack} onChange={e=>setAck(e.target.checked)} className="accent-red-400 mt-0.5"/>
+            <span className="text-[10px] text-[#A7B0B7] leading-snug">
+              I understand this bot will place trades with real money.
+            </span>
+          </label>
+        )}
+
+        <div className={`space-y-2 ${needsAck && !ack ? 'opacity-40 pointer-events-none' : ''}`}>
+          {[
+            ['spot',     'Spot Trading',     'Execute spot buys/sells via Jupiter DEX'],
+            ['leverage', 'Leverage Trading', 'Open leveraged positions 1–300×'],
+            ['both',     'Both',             'Active on both spot and leverage'],
+          ].map(([val,label,desc])=>(
+            <button key={val} onClick={()=>onPick(val as any)}
+              className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-[#2BFFF1]/40 hover:bg-[#2BFFF1]/05 transition-all text-left group">
+              <div className="w-8 h-8 rounded-lg bg-[#2BFFF1]/10 border border-[#2BFFF1]/20 flex items-center justify-center flex-shrink-0 group-hover:bg-[#2BFFF1]/20 transition-all">
+                {val==='spot'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>}
+                {val==='leverage'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>}
+                {val==='both'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>}
+              </div>
+              <div>
+                <p className="text-sm font-bold text-[#F4F6FA] group-hover:text-[#2BFFF1] transition-all">{label}</p>
+                <p className="text-[10px] text-[#4B5563]">{desc}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+        <button onClick={onCancel} className="w-full py-2 rounded-xl border border-white/[0.08] text-xs text-[#4B5563] hover:text-[#A7B0B7] transition-all">Cancel</button>
       </div>
     </div>
   );
@@ -135,9 +230,28 @@ function BotEditor({ bot, onSave, onCancel }:{ bot:Partial<CustomBot>|null; onSa
   };
   const togglePat = (p:string) => setPatterns(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p]);
 
+  // NEW: same checks the AI builder runs, so a hand-built bot gets the same
+  // warnings — sub-1:1 reward:risk, oversized positions, a stop inside noise.
+  const validation = validateBotConfig({
+    name, description: desc, indicators, candle_patterns: patterns,
+    entry_rules: { logic: entryLogic },
+    exit_rules: { mode: exitMode, tp_pct: tp, sl_pct: sl },
+    risk_rules: { max_position_pct: maxPos },
+  }, { barsAvailable: 500 });
+  const warnings = validation.issues.filter(i => i.severity === 'warning');
+
   const save = () => {
     if(!name.trim()) return;
-    onSave({ name:name.trim(), description:desc.trim(), is_public:isPublic, fee_pct:feePct/100, indicators, candle_patterns:patterns, entry_rules:{logic:entryLogic}, exit_rules:{mode:exitMode,tp_pct:tp,sl_pct:sl}, risk_rules:{max_position_pct:maxPos} });
+    onSave({
+      name:name.trim(), description:desc.trim(), is_public:isPublic,
+      // CHANGED: a private bot cannot earn a marketplace fee, so it must not
+      // carry one. The value persisted when Public was toggled back off.
+      fee_pct: isPublic ? feePct/100 : 0,
+      indicators, candle_patterns:patterns,
+      entry_rules:{logic:entryLogic},
+      exit_rules:{mode:exitMode,tp_pct:tp,sl_pct:sl},
+      risk_rules:{max_position_pct:maxPos},
+    });
   };
 
   const inputCls = "w-full bg-[#05060B] border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40";
@@ -169,8 +283,9 @@ function BotEditor({ bot, onSave, onCancel }:{ bot:Partial<CustomBot>|null; onSa
           {/* Settings row */}
           <div className="grid grid-cols-3 gap-2">
             <div>
-              <label className="text-[10px] text-[#4B5563] block mb-1">Fee (%)</label>
-              <input type="number" min={0} max={5} step={0.1} value={feePct} onChange={e=>setFeePct(parseFloat(e.target.value)||0)} className={inputCls}/>
+              <label className="text-[10px] text-[#4B5563] block mb-1">Fee (%) {!isPublic&&<span className="text-[#374151]">n/a</span>}</label>
+              <input type="number" min={0} max={5} step={0.1} value={feePct} disabled={!isPublic}
+                onChange={e=>setFeePct(parseFloat(e.target.value)||0)} className={`${inputCls} disabled:opacity-40`}/>
             </div>
             <div>
               <label className="text-[10px] text-[#4B5563] block mb-1">Max position %</label>
@@ -178,7 +293,7 @@ function BotEditor({ bot, onSave, onCancel }:{ bot:Partial<CustomBot>|null; onSa
             </div>
             <div className="flex flex-col">
               <label className="text-[10px] text-[#4B5563] block mb-1">Visibility</label>
-              <button onClick={()=>setPublic(p=>!p)} className={`flex-1 rounded-xl border text-xs font-bold transition-all ${isPublic?'bg-[#2BFFF1]/15 text-[#2BFFF1] border-[#2BFFF1]/30':'border-white/[0.08] text-[#6B7280]'}`}>
+              <button onClick={()=>setPublic(p=>{ if(p) setFeePct(0); return !p; })} className={`flex-1 rounded-xl border text-xs font-bold transition-all ${isPublic?'bg-[#2BFFF1]/15 text-[#2BFFF1] border-[#2BFFF1]/30':'border-white/[0.08] text-[#6B7280]'}`}>
                 {isPublic?'Public':'Private'}
               </button>
             </div>
@@ -230,7 +345,15 @@ function BotEditor({ bot, onSave, onCancel }:{ bot:Partial<CustomBot>|null; onSa
                 <div><label className="text-[10px] text-[#4B5563] block mb-1">Take Profit %</label><input type="number" min={0.1} max={100} step={0.5} value={tp} onChange={e=>setTp(parseFloat(e.target.value)||5)} className={inputCls}/></div>
                 <div><label className="text-[10px] text-[#4B5563] block mb-1">Stop Loss %</label><input type="number" min={0.1} max={50} step={0.5} value={sl} onChange={e=>setSl(parseFloat(e.target.value)||2)} className={inputCls}/></div>
               </div>
-              {feePct>0&&<div className="rounded-xl border border-[#2BFFF1]/15 bg-[#2BFFF1]/05 px-3 py-2"><p className="text-[10px] text-[#2BFFF1]/70">Your bot charges {feePct.toFixed(1)}% on top of Xenia's base fee. This is collected when others use your public bot.</p></div>}
+              {feePct>0&&isPublic&&<div className="rounded-xl border border-[#2BFFF1]/15 bg-[#2BFFF1]/05 px-3 py-2"><p className="text-[10px] text-[#2BFFF1]/70">Your bot charges {feePct.toFixed(1)}% on top of Xenia's base fee. This is collected when others use your public bot.</p></div>}
+            </div>
+          )}
+
+          {/* NEW: the same checks the AI builder shows, for hand-built bots. */}
+          {warnings.length>0&&(
+            <div className="rounded-xl border border-[#F59E0B]/25 bg-[#F59E0B]/[0.06] px-3 py-2 space-y-1">
+              <p className="text-[10px] font-bold text-[#F59E0B]">Worth checking before you deploy</p>
+              {warnings.map((w,i)=><p key={i} className="text-[9px] text-[#F59E0B]/80 leading-snug">· {w.message}</p>)}
             </div>
           )}
         </div>
@@ -258,6 +381,9 @@ export function BotLabPage() {
   const [publicBots,      setPublicBots]     = useState<CustomBot[]>([]);
   const [marketLoading,   setMarketLoad]     = useState(false);
   const [usingBot,        setUsingBot]       = useState<string|null>(null);
+  // NEW: the app's current mode, so deploy can bind it onto the bot.
+  const [modeState, setModeState] = useState(tradingMode.get());
+  useEffect(() => tradingMode.subscribe(setModeState), []);
 
   const load = async () => {
     if(!supabase||!user){setLoading(false);return;}
@@ -275,17 +401,38 @@ export function BotLabPage() {
     setMarketLoad(false);
   };
 
+  /* ── Marketplace deploy ────────────────────────────────────────────────
+     THREE CHANGES, all of which were silent failures before.
+
+     1. ATTRIBUTION. The clone stored no reference to the source bot or its
+        author. `use_count` incremented on the original and that was the only
+        trace — so the marketplace promise, "you earn X% on others' profits when
+        they use your bot", had nothing in the data to compute or pay against.
+        source_bot_id and source_author_id now carry that link.
+
+     2. FEE. The clone is private but kept the author's fee_pct, so it charged
+        on behalf of nobody. The clone now carries fee 0; the author's rate lives
+        on the source bot, which is where a payout job would read it.
+
+     3. MODE. The clone was inserted straight to `status: 'active'` without a
+        mode, so it ran against whatever the global flag happened to be. It now
+        goes through the same picker, with the same live confirmation, as a
+        first-party deploy.
+     ─────────────────────────────────────────────────────────────────── */
   const confirmMarketDeploy = async (target: 'spot'|'leverage'|'both') => {
     if(!supabase||!user||!marketDeploying) return;
     const bot = marketDeploying;
     setUsingBot(bot.id);
     setMarketDeploying(null);
-    // Clone bot and immediately activate with chosen target
     await supabase.from('custom_bots').insert({
       user_id:user.id, name:bot.name, description:bot.description,
       status:'active', target, is_public:false, indicators:bot.indicators,
       candle_patterns:bot.candle_patterns, entry_rules:bot.entry_rules,
-      exit_rules:bot.exit_rules, risk_rules:bot.risk_rules, fee_pct:bot.fee_pct,
+      exit_rules:bot.exit_rules, risk_rules:bot.risk_rules,
+      fee_pct: 0,
+      source_bot_id: bot.id,
+      source_author_id: bot.user_id,
+      deployed_mode: modeState.mode,
     });
     await supabase.from('custom_bots').update({use_count:bot.use_count+1}).eq('id',bot.id);
     setUsingBot(null);
@@ -315,16 +462,18 @@ export function BotLabPage() {
     if(!supabase||!user) return;
     const isEdit = typeof editing==='object'&&editing!==null&&(editing as CustomBot).id;
     if(isEdit) await supabase.from('custom_bots').update({...data,updated_at:new Date().toISOString()}).eq('id',(editing as CustomBot).id);
-    else await supabase.from('custom_bots').insert({...data,user_id:user.id,status:'lab'});
+    // NEW: deployed_mode is null at creation. Mode belongs to the deployment.
+    else await supabase.from('custom_bots').insert({...data,user_id:user.id,status:'lab',deployed_mode:null});
     setEditing(null); await load();
   };
 
   const activate = async (bot:CustomBot) => {
     if(!supabase) return;
-    if(bot.status === 'lab') {
-      // Show target selector before deploying
-      setDeploying(bot);
-      return;
+    if(bot.status === 'lab') { setDeploying(bot); return; }
+    // NEW: resuming a LIVE bot re-confirms. Pausing never does — stopping should
+    // always be one tap.
+    if(bot.status === 'paused' && boundMode(bot) === 'live') {
+      if(!confirm(`"${bot.name}" was deployed in LIVE mode and will resume trading with real funds. Continue?`)) return;
     }
     const next = bot.status==='paused'?'active':'paused';
     await supabase.from('custom_bots').update({status:next}).eq('id',bot.id);
@@ -333,7 +482,11 @@ export function BotLabPage() {
 
   const confirmDeploy = async (target: 'spot'|'leverage'|'both') => {
     if(!supabase||!deploying) return;
-    await supabase.from('custom_bots').update({status:'active', target}).eq('id',deploying.id);
+    // NEW: bind the mode at deploy time. Read once, stored on the row — the app
+    // flag changing later does not re-target a running bot.
+    await supabase.from('custom_bots')
+      .update({status:'active', target, deployed_mode: modeState.mode})
+      .eq('id',deploying.id);
     setDeploying(null);
     await load();
   };
@@ -346,75 +499,29 @@ export function BotLabPage() {
 
   const labBots    = bots.filter(b=>b.status==='lab');
   const activeBots = bots.filter(b=>b.status==='active'||b.status==='paused');
+  // NEW: a LIVE header above running MOCK bots is not a lie, but it is confusing.
+  const mismatched = activeBots.filter(b=>boundMode(b)!==modeState.mode);
+
+  const issuesFor = (bot:CustomBot|null) => {
+    if(!bot) return null;
+    const v = validateBotConfig(bot, { barsAvailable: 500 });
+    return v.issues.length ? summarizeIssues(v) + ' Open Edit to review.' : null;
+  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#05060B]">
       {editing!==null&&<BotEditor bot={editing==='new'?{}:editing as Partial<CustomBot>} onSave={save} onCancel={()=>setEditing(null)}/>}
 
-      {/* ── Market bot deploy picker ────────────────────────────── */}
       {marketDeploying&&(
-        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" onClick={()=>setMarketDeploying(null)}>
-          <div className="bg-[#0B0E14] border border-white/[0.1] rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4" onClick={e=>e.stopPropagation()}>
-            <div>
-              <p className="text-sm font-black text-[#F4F6FA]">Activate "{marketDeploying.name}"</p>
-              <p className="text-[10px] text-[#4B5563] mt-0.5">Choose where this bot will trade</p>
-            </div>
-            <div className="space-y-2">
-              {[
-                ['spot',     'Spot Trading',     'Execute spot buys/sells via Jupiter DEX'],
-                ['leverage', 'Leverage Trading', 'Open leveraged positions 1–300×'],
-                ['both',     'Both',             'Active on both spot and leverage'],
-              ].map(([val,label,desc])=>(
-                <button key={val} onClick={()=>confirmMarketDeploy(val as any)}
-                  className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-[#2BFFF1]/40 hover:bg-[#2BFFF1]/05 transition-all text-left group">
-                  <div className="w-8 h-8 rounded-lg bg-[#2BFFF1]/10 border border-[#2BFFF1]/20 flex items-center justify-center flex-shrink-0 group-hover:bg-[#2BFFF1]/20 transition-all">
-                    {val==='spot'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>}
-                    {val==='leverage'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>}
-                    {val==='both'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-[#F4F6FA] group-hover:text-[#2BFFF1] transition-all">{label}</p>
-                    <p className="text-[10px] text-[#4B5563]">{desc}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <button onClick={()=>setMarketDeploying(null)} className="w-full py-2 rounded-xl border border-white/[0.08] text-xs text-[#4B5563] hover:text-[#A7B0B7] transition-all">Cancel</button>
-          </div>
-        </div>
+        <DeployPicker botName={marketDeploying.name} mode={modeState.mode} verb="Activate"
+          issues={issuesFor(marketDeploying)}
+          onPick={confirmMarketDeploy} onCancel={()=>setMarketDeploying(null)}/>
       )}
 
-      {/* ── Deploy target picker ─────────────────────────────────── */}
       {deploying&&(
-        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" onClick={()=>setDeploying(null)}>
-          <div className="bg-[#0B0E14] border border-white/[0.1] rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4" onClick={e=>e.stopPropagation()}>
-            <div>
-              <p className="text-sm font-black text-[#F4F6FA]">Deploy "{deploying.name}"</p>
-              <p className="text-[10px] text-[#4B5563] mt-0.5">Choose where this bot will trade</p>
-            </div>
-            <div className="space-y-2">
-              {[
-                ['spot',     'Spot Trading',     'Execute spot buys/sells via Jupiter DEX'],
-                ['leverage', 'Leverage Trading', 'Open leveraged positions 1–300×'],
-                ['both',     'Both',             'Active on both spot and leverage'],
-              ].map(([val,label,desc])=>(
-                <button key={val} onClick={()=>confirmDeploy(val as any)}
-                  className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-white/[0.07] bg-white/[0.02] hover:border-[#2BFFF1]/40 hover:bg-[#2BFFF1]/05 transition-all text-left group">
-                  <div className="w-8 h-8 rounded-lg bg-[#2BFFF1]/10 border border-[#2BFFF1]/20 flex items-center justify-center flex-shrink-0 group-hover:bg-[#2BFFF1]/20 transition-all">
-                    {val==='spot'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>}
-                    {val==='leverage'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>}
-                    {val==='both'&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2BFFF1" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-[#F4F6FA] group-hover:text-[#2BFFF1] transition-all">{label}</p>
-                    <p className="text-[10px] text-[#4B5563]">{desc}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-            <button onClick={()=>setDeploying(null)} className="w-full py-2 rounded-xl border border-white/[0.08] text-xs text-[#4B5563] hover:text-[#A7B0B7] transition-all">Cancel</button>
-          </div>
-        </div>
+        <DeployPicker botName={deploying.name} mode={modeState.mode} verb="Deploy"
+          issues={issuesFor(deploying)}
+          onPick={confirmDeploy} onCancel={()=>setDeploying(null)}/>
       )}
 
       {/* Header */}
@@ -428,6 +535,17 @@ export function BotLabPage() {
           New Bot
         </button>
       </div>
+
+      {/* NEW: surface bots running in a different mode than the app shows. */}
+      {mismatched.length>0&&(
+        <div className="px-4 py-2 border-b border-white/[0.05] bg-[#F59E0B]/[0.05] flex-shrink-0">
+          <p className="text-[10px] text-[#F59E0B] leading-snug">
+            {mismatched.length} {mismatched.length===1?'bot is':'bots are'} running in{' '}
+            {mismatched.length===1?boundMode(mismatched[0]).toUpperCase():'a different'} mode while the app shows{' '}
+            {modeState.mode.toUpperCase()}. Bots keep the mode they were deployed in — redeploy to change it.
+          </p>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex border-b border-white/[0.05] flex-shrink-0">
@@ -487,6 +605,11 @@ export function BotLabPage() {
                       {b.total_pnl!==0&&<div className="text-center"><p className="text-[#4B5563]">PnL</p><p className={`font-bold ${b.total_pnl>=0?'text-green-400':'text-red-400'}`}>${Math.abs(b.total_pnl).toFixed(0)}</p></div>}
                       {b.fee_pct>0&&<div className="text-center"><p className="text-[#4B5563]">Fee</p><p className="font-bold text-[#F59E0B]">{(b.fee_pct*100).toFixed(1)}%</p></div>}
                     </div>
+                    {/* NEW: an untraded bot has no track record, and a blank
+                        Win%/PnL row reads as "no losses" rather than "no data". */}
+                    {b.use_count===0&&b.total_pnl===0&&(
+                      <p className="text-[9px] text-[#F59E0B]/70">No trading history yet — this bot has never been run.</p>
+                    )}
                     <button onClick={()=>user?setMarketDeploying(b):undefined} disabled={!user||usingBot===b.id}
                       className="w-full py-2 rounded-xl text-xs font-bold bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/25 hover:bg-[#2BFFF1]/25 transition-all disabled:opacity-40">
                       {usingBot===b.id?'Activating…':user?'Use Bot':'Sign in to use'}
