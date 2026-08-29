@@ -35,6 +35,7 @@
 import {
   Connection, Keypair, PublicKey, VersionedTransaction,
 } from '@solana/web3.js';
+export type { Connection };
 import type { Broker } from './runner';
 import type { Side } from './types';
 
@@ -255,7 +256,7 @@ export class SolanaSpotBroker implements Broker {
     }
   }
 
-  async close(o: { symbol: string; side: Side; notionalUsd: number; exitHint: number }) {
+  async close(_o: { symbol: string; side: Side; notionalUsd: number; exitHint: number }) {
     try {
       const tok = await this.tokenBalance(this.mint);
       if (tok.raw === 0n) return { ok: false, fillPrice: 0, error: 'Nothing to sell.' };
@@ -284,7 +285,7 @@ export class SolanaSpotBroker implements Broker {
  * plus the priority fee, and impact scales with your size against pool depth.
  */
 export async function estimateRoundTripCostPct(
-  conn: Connection, tokenMint: string, decimals: number, notionalUsd: number,
+  tokenMint: string, notionalUsd: number,
 ): Promise<{ costPct: number; note: string }> {
   const raw = BigInt(Math.floor(notionalUsd * 1e6));
   const url = `${JUPITER_QUOTE}?inputMint=${USDC_MINT}&outputMint=${tokenMint}`
