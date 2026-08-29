@@ -100,6 +100,32 @@ export function fmtPrice(v: number): string {
   return v.toPrecision(4);
 }
 
+/**
+ * Narrower variant for list columns, where a 70px cell cannot hold seven
+ * decimals. Same rules as fmtPrice, one significant figure fewer at each step.
+ * It exists here rather than in a page so the two never drift apart.
+ */
+export function fmtPriceCompact(v: number): string {
+  if (!Number.isFinite(v)) return '—';
+  if (v === 0) return '0';
+  const a = Math.abs(v);
+  if (a >= 1000) return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  if (a >= 1) return v.toFixed(3);
+  if (a >= 0.01) return v.toFixed(4);
+  if (a >= 0.0001) return v.toFixed(6);
+  return v.toPrecision(3);
+}
+
+/** Magnitude without the dollar sign, for columns headed "Vol" or "Liq". */
+export function fmtUsdBare(v?: number): string {
+  if (v === undefined || !Number.isFinite(v)) return '—';
+  const a = Math.abs(v);
+  if (a >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+  if (a >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
+  return v.toFixed(0);
+}
+
 export function fmtUsd(v: number | undefined, compact = true): string {
   if (v === undefined || !Number.isFinite(v)) return '—';
   const a = Math.abs(v);
