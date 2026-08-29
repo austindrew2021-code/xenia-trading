@@ -177,22 +177,6 @@ function indADX(candles:{high:number;low:number;close:number}[], n:number): (num
   }
   return out;
 }
-function indRSI(closes: number[], n: number): number|null {
-  if(closes.length<n+1) return null;
-  let g=0,l=0;
-  for(let i=closes.length-n;i<closes.length;i++){const d=closes[i]-closes[i-1];d>0?g+=d:l-=d;}
-  const ag=g/n,al=l/n; return al===0?100:100-100/(1+ag/al);
-}
-function indMACD(closes: number[]): {macd:number|null;signal:number|null;hist:number|null} {
-  const fast=indEMA(closes,12),slow=indEMA(closes,26);
-  const macdLine=closes.map((_,i)=>fast[i]!==null&&slow[i]!==null?(fast[i] as number)-(slow[i] as number):null);
-  const validMacd=macdLine.filter(v=>v!==null) as number[];
-  if(validMacd.length===0) return{macd:null,signal:null,hist:null};
-  const sigVals=indEMA(validMacd,9);
-  const macd=macdLine[macdLine.length-1];
-  const signal=sigVals[sigVals.length-1];
-  return{macd,signal,hist:macd!==null&&signal!==null?macd-signal:null};
-}
 import { Candle } from '../types';
 import type { ChartTheme } from './ChartSettings';
 import { ChartIndicatorsMenu } from './ChartIndicatorsMenu';
@@ -255,7 +239,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
   const posLinesRef    = useRef<any[]>([]);
   const drawnRef       = useRef<any[]>([]);
   const fmtKeyRef      = useRef('');
-  const holdTimer      = useRef<ReturnType<typeof setTimeout>>();
+  const holdTimer      = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastParamRef   = useRef<any>(null);
   const tpLineRef      = useRef<any>(null);
   const slLineRef      = useRef<any>(null);
@@ -284,7 +268,6 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
   const [activeIndicators,   setActiveIndicators]   = useState<string[]>([]);
   const [showTradePanel,     setShowTradePanel]     = useState(false);
   // On mobile fullscreen show trade panel too
-  const [mobileTradePanelPos, setMobileTradePanelPos] = useState({ x: 8, y: 60 });
   const [tradePanelPos,  setTradePanelPos]  = useState({ x: 20, y: 80 });
   const [tradeSide,      setTradeSide]      = useState<'buy'|'sell'>('buy');
   const dragPanel = useRef<{ startX:number; startY:number; ox:number; oy:number } | null>(null);
@@ -493,7 +476,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     // Detect bullish OBs (last 50 candles, max 4)
     let bullCount = 0, bearCount = 0;
     for (let i = n-3; i >= Math.max(3, n-50) && bullCount < 4; i--) {
-      const c=candles[i], p=candles[i-1], n2=candles[i+1];
+      const p=candles[i-1], n2=candles[i+1];
       if (p.close < p.open && n2.close > n2.open && n2.close > p.high) {
         const pl = candleRef.current?.createPriceLine({ price:p.high, lineWidth:1, lineStyle:LineStyle.Solid, color:'rgba(74,222,128,0.6)', axisLabelVisible:false, title:`OB${bullCount+1}` });
         if (pl) { obLineRef.current.push(pl); bullCount++; }
@@ -503,7 +486,7 @@ export function PriceChart({ candles, livePrice, positions, onQuickTP, onQuickSL
     }
     // Detect bearish OBs
     for (let i = n-3; i >= Math.max(3, n-50) && bearCount < 4; i--) {
-      const c=candles[i], p=candles[i-1], n2=candles[i+1];
+      const p=candles[i-1], n2=candles[i+1];
       if (p.close > p.open && n2.close < n2.open && n2.close < p.low) {
         const pl = candleRef.current?.createPriceLine({ price:p.high, lineWidth:1, lineStyle:LineStyle.Solid, color:'rgba(248,113,113,0.6)', axisLabelVisible:false, title:`SOB${bearCount+1}` });
         if (pl) { obLineRef.current.push(pl); bearCount++; }
