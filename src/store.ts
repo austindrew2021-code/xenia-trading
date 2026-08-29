@@ -49,6 +49,49 @@ function uid() { return Math.random().toString(36).slice(2, 10); }
 
 export type TradingMode = 'mock' | 'live';
 
+/**
+ * The three fields the fixes above require, added here rather than in types.ts
+ * so this file drops in with no edit anywhere else. `XPosition` is structurally
+ * a `Position`, so every existing component that imports `Position` from
+ * ./types keeps compiling and reading these objects unchanged.
+ *
+ *   mode        bound at open, never mutated — see note 1
+ *   ownerId     the auth user at open time — see note 2
+ *   realizedPnl P&L already banked by partial closes — see note 4
+ */
+export interface XPosition extends Position {
+  mode: TradingMode;
+  ownerId: string | null;
+  realizedPnl: number;
+}
+
+/**
+ * Pure selectors. Components must filter through these on the raw `positions`
+ * array rather than calling the store methods below, because a method that
+ * reads via get() does not create a subscription — the component would render
+ * stale lists until something else forced an update. Same logic, one reactive
+ * and one convenient for non-component callers.
+ */
+export function selectVisible(
+  positions: Position[], mode: TradingMode, ownerId: string | null,
+): XPosition[] {
+  return (positions as XPosition[]).filter(p => {
+    if ((p.mode ?? 'mock') !== mode) return false;
+    const o = p.ownerId ?? null;
+    // Positions opened before sign-in have no owner and stay visible; ones
+    // stamped with a different user do not.
+    return o === null || o === ownerId;
+  });
+}
+
+export const selectOpen = (
+  positions: Position[], mode: TradingMode, ownerId: string | null,
+) => selectVisible(positions, mode, ownerId).filter(p => p.status === 'open');
+
+export const selectClosed = (
+  positions: Position[], mode: TradingMode, ownerId: string | null,
+) => selectVisible(positions, mode, ownerId).filter(p => p.status !== 'open');
+
 function calcLiqPrice(entry: number, side: Side, leverage: number): number {
   const margin = 1 / leverage;
   return side === 'LONG'
@@ -69,7 +112,7 @@ interface TradingState {
   /** Baseline per mode, so a mode switch cannot corrupt the other one's %. */
   startingCapitalMock: number;
   startingCapitalLive: number;
-  positions: Position[];
+  positions: XPosition[];
   botConfigs: BotConfigs;
   logs: string[];
 
@@ -86,7 +129,7 @@ interface TradingState {
     size: number, leverage: number,
     openedBy: Position['openedBy'],
     tp?: number, sl?: number
-  ) => Position | null;
+  ) => XPosition | null;
   closePosition: (id: string, closePrice: number) => void;
   liquidatePosition: (id: string, closePrice: number) => void;
   partialClosePosition: (id: string, closePrice: number, fraction: number) => void;
@@ -96,9 +139,9 @@ interface TradingState {
   clearClosed: () => void;
 
   /** Positions belonging to the current mode and user. Use these everywhere. */
-  visiblePositions: () => Position[];
-  openPositions: () => Position[];
-  closedPositions: () => Position[];
+  visiblePositions: () => XPosition[];
+  openPositions: () => XPosition[];
+  closedPositions: () => XPosition[];
   startingCapital: () => number;
 }
 
@@ -144,7 +187,7 @@ export const useTradingStore = create<TradingState>()(
           capital: sc,
           // Only this mode's positions and logs. Resetting mock must never
           // delete a live position, which the previous version did.
-          positions: s.positions.filter(p => (p as any).mode !== s.mode),
+          positions: s.positions.filter(p => p.mode !== s.mode),
           logs: [],
         });
       },
@@ -154,7 +197,7 @@ export const useTradingStore = create<TradingState>()(
         if (capital < size) return null;
         if (!(entryPrice > 0) || !(size > 0) || !(leverage >= 1)) return null;
 
-        const pos: Position = {
+        const pos: XPosition = {
           id: uid(),
           asset, side, entryPrice, size, leverage,
           notional: size * leverage,
@@ -172,7 +215,7 @@ export const useTradingStore = create<TradingState>()(
           mode,
           ownerId,
           realizedPnl: 0,
-        } as Position;
+        };
 
         set(s => ({
           capital: s.capital - size,
@@ -188,10 +231,10 @@ export const useTradingStore = create<TradingState>()(
           // Refuse to settle a position from the other mode against this
           // balance. Nothing should call it, but the guard is one line and the
           // failure it prevents is crediting real funds with mock profit.
-          if ((pos as any).mode !== s.mode) return s;
+          if (pos.mode !== s.mode) return s;
 
           const { pnl, pnlPct } = calcPnl(pos, closePrice);
-          const banked = (pos as any).realizedPnl ?? 0;
+          const banked = pos.realizedPnl ?? 0;
           return {
             capital: s.capital + pos.size + pnl,
             positions: s.positions.map(p => p.id === id
@@ -210,8 +253,8 @@ export const useTradingStore = create<TradingState>()(
         set(s => {
           const pos = s.positions.find(p => p.id === id && p.status === 'open');
           if (!pos) return s;
-          if ((pos as any).mode !== s.mode) return s;
-          const banked = (pos as any).realizedPnl ?? 0;
+          if (pos.mode !== s.mode) return s;
+          const banked = pos.realizedPnl ?? 0;
           return {
             positions: s.positions.map(p => p.id === id
               ? {
@@ -229,7 +272,7 @@ export const useTradingStore = create<TradingState>()(
         set(s => {
           const pos = s.positions.find(p => p.id === id && p.status === 'open');
           if (!pos) return s;
-          if ((pos as any).mode !== s.mode) return s;
+          if (pos.mode !== s.mode) return s;
           if (!(fraction > 0) || fraction >= 1) return s;
 
           const partialSize = pos.size * fraction;
@@ -244,8 +287,8 @@ export const useTradingStore = create<TradingState>()(
                   size: remaining,
                   notional: remaining * p.leverage,
                   // Recorded, not discarded. See note 4.
-                  realizedPnl: ((p as any).realizedPnl ?? 0) + pnl,
-                } as Position
+                  realizedPnl: (p.realizedPnl ?? 0) + pnl,
+                }
               : p
             ),
           };
@@ -280,7 +323,7 @@ export const useTradingStore = create<TradingState>()(
         // live record, which is the one that has to be auditable.
         set(s => ({
           positions: s.positions.filter(
-            p => p.status === 'open' || (p as any).mode !== s.mode,
+            p => p.status === 'open' || p.mode !== s.mode,
           ),
         }));
       },
@@ -292,7 +335,7 @@ export const useTradingStore = create<TradingState>()(
       visiblePositions: () => {
         const s = get();
         return s.positions.filter(p => {
-          const m = (p as any).mode ?? 'mock';
+          const m = p.mode ?? 'mock';
           const o = (p as any).ownerId ?? null;
           if (m !== s.mode) return false;
           // Positions opened before sign-in have a null owner and stay visible;
