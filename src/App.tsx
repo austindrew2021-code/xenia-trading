@@ -79,7 +79,7 @@ function getPrecision(p: number) { if (p >= 1) return 4; if (p >= 0.001) return 
 
 function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: { livePrice: number; asset: string; chartTP?: number|null; chartSL?: number|null; onClearChartTPSL?: () => void }) {
   const { capital, openPosition, addLog } = useTradingStore();
-  const { account, saveAccount, refreshBalance, recordTrade, liveSOL, liveSOLUSD } = useAuth();
+  const { account, saveAccount, refreshBalance, recordTrade, liveSOL } = useAuth();
   const [side, setSide] = useState<Side>('LONG');
   const [size, setSize] = useState('50');
   const [lev, setLev] = useState('10');
@@ -356,7 +356,7 @@ export default function App() {
 
   const { candles, livePrice, loading, change24h, prices, asset } = usePriceData(assetId, interval, customAddr, customPair);
   const { capital, setCapital, positions } = useTradingStore();
-  const { user, account, signOut, loading: authLoading, liveSOL, liveSOLUSD } = useAuth();
+  const { user, account, signOut, loading: authLoading, liveSOL } = useAuth();
   useBotEngine({ prices, livePrice, asset: asset.label, candles });
 
   useEffect(() => { setFlash(true); setTimeout(() => setFlash(false), 300); }, [livePrice]);
