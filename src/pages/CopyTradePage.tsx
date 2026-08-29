@@ -4,8 +4,8 @@ import { useAuth } from '../auth/AuthContext';
 // NEW: one source of truth for mock/live. See the note on the header toggle.
 import { tradingMode } from '../lib/tradingMode';
 
-const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
-const COPY_FEE_PCT = 0.1; // 10% of profits go to Xenia
+// Xenia's cut of copy-trade profits, shown in the fee breakdown below.
+export const COPY_FEE_PCT = 0.1;
 
 interface Trader {
   id: string;
