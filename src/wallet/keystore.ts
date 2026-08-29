@@ -24,6 +24,16 @@
 //     4. For manual trading, prefer a connected Phantom/Solflare wallet, where
 //        the key never enters this page at all.
 //   Do not tell users this is as safe as a hardware wallet. It is not.
+//
+// DEPENDENCY PIN — DO NOT LOOSEN
+//   package.json must carry "@scure/bip39": "^2.4.0".
+//   The v1 and v2 exports maps are mutually exclusive and there is no specifier
+//   that satisfies both:
+//     v1.x subpath key is "./wordlists/english"      → the .js form throws
+//     v2.x subpath key is "./wordlists/english.js"   → the bare form throws
+//   Vite honours exports maps, so a mismatch is a hard build failure rather than
+//   a silent miss. If `npm ls @scure/bip39` shows 1.x hoisted at the top level,
+//   fix the pin — do not edit the import below to match it.
 
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
@@ -46,7 +56,7 @@ export interface Vault {
   iv: string;               // base64
   ciphertext: string;       // base64, AES-GCM over the 64-byte secret key
   origin: 'generated' | 'imported';
-  /** True once the user has proven they wrote the phrase down. */
+  /** True once the user has proven they hold the phrase. */
   backupConfirmed: boolean;
 }
 
@@ -60,6 +70,8 @@ const hex = (u: Uint8Array) =>
 /**
  * WebCrypto wants a BufferSource backed by a plain ArrayBuffer. A Uint8Array
  * view over a pooled or shared buffer is not that, so copy into a fresh one.
+ * This is also what keeps the file free of any `Buffer` reference — nothing here
+ * depends on a Node polyfill being present in the bundle.
  */
 function bytes(u: Uint8Array): ArrayBuffer {
   const out = new ArrayBuffer(u.byteLength);
@@ -79,17 +91,23 @@ export function newMnemonic(strength: 128 | 256 = 128): string {
   return generateMnemonic(wordlist, strength);
 }
 
+export function normalizeMnemonic(phrase: string): string {
+  return phrase.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export function isValidMnemonic(phrase: string): boolean {
-  return validateMnemonic(phrase.trim().replace(/\s+/g, ' ').toLowerCase(), wordlist);
+  return validateMnemonic(normalizeMnemonic(phrase), wordlist);
 }
 
 export function keypairFromMnemonic(phrase: string, path = DERIVATION_PATH): Keypair {
-  const clean = phrase.trim().replace(/\s+/g, ' ').toLowerCase();
+  const clean = normalizeMnemonic(phrase);
   if (!validateMnemonic(clean, wordlist)) throw new Error('That recovery phrase is not valid.');
   const seed = mnemonicToSeedSync(clean);
+  // derivePath takes hex, not a Buffer. Formatting it here rather than reaching
+  // for Buffer.from keeps this path browser-native.
   const { key } = derivePath(path, hex(new Uint8Array(seed)));
   const kp = Keypair.fromSeed(new Uint8Array(key));
-  wipe(new Uint8Array(seed));
+  wipe(seed);          // wipe the seed itself, not a throwaway copy of it
   return kp;
 }
 
@@ -193,10 +211,18 @@ export const deleteVault = (address: string) => tx('readwrite', s => s.delete(ad
 export function backupChallenge(mnemonic: string, count = 3): number[] {
   const n = mnemonic.trim().split(/\s+/).length;
   const picks = new Set<number>();
-  const buf = new Uint32Array(count * 4);
-  crypto.getRandomValues(buf);
-  let i = 0;
-  while (picks.size < count && i < buf.length) picks.add((buf[i++] % n) + 1);
+  // Keep drawing until we have `count` distinct positions. The old fixed-size
+  // buffer could run out on a collision and silently return fewer words to
+  // check, which quietly weakens the one gate standing between a user and an
+  // unrecoverable wallet.
+  while (picks.size < Math.min(count, n)) {
+    const buf = new Uint32Array(8);
+    crypto.getRandomValues(buf);
+    for (const v of buf) {
+      if (picks.size >= Math.min(count, n)) break;
+      picks.add((v % n) + 1);
+    }
+  }
   return [...picks].sort((a, b) => a - b);
 }
 
