@@ -1,0 +1,134 @@
+/* ── Xenia — global styles ────────────────────────────────────────────────
+   Append to src/index.css, below the @tailwind directives.
+
+   `no-scrollbar` is required: MarketListPage and the Chips primitive both use
+   it for horizontal filter strips, and without it a scrollbar gutter appears
+   mid-layout on desktop and the row heights stop matching.
+*/
+
+@layer base {
+  :root {
+    /* Two roles only. The mono face is the one that matters — it is what makes
+       a column of prices align and stops a ticking value reflowing its row.
+       System stacks by default so there is no network font blocking first
+       paint; see the note at the bottom for upgrading deliberately. */
+    --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+      Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, 'Roboto Mono',
+      Menlo, Consolas, monospace;
+  }
+
+  html {
+    background: #080B10;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: #E5E9EF;
+    /* Overscroll on a trading screen bounces the chart away from the thumb and
+       can trigger pull-to-refresh mid-drag, which loses an order ticket. */
+    overscroll-behavior: none;
+  }
+
+  /* Every mono element is tabular by default, so a missed utility class cannot
+     produce a jittering price. */
+  .font-mono,
+  code, kbd, samp, pre {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'zero' 1;
+  }
+
+  /* Numeric inputs jitter as you type without this. */
+  input[inputmode='decimal'],
+  input[inputmode='numeric'],
+  input[type='number'] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Native spinners steal horizontal space in a dense ticket. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] { -moz-appearance: textfield; }
+
+  /* Keyboard focus must stay visible. Removing outlines is the most common
+     accessibility regression in dark dense UI. */
+  :focus-visible {
+    outline: 1px solid #2BFFF1;
+    outline-offset: 1px;
+  }
+
+  /* iOS zooms the page when a font under 16px receives focus, which breaks the
+     layout and does not zoom back out. Scaling the text up on focus and
+     compensating with a transform avoids it without enlarging the resting UI. */
+  @supports (-webkit-touch-callout: none) {
+    input, select, textarea { font-size: 16px; }
+  }
+
+  ::selection {
+    background: rgba(43, 255, 241, 0.25);
+    color: #F4F6FA;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Dense lists get a thin, unobtrusive scrollbar rather than none, so a long
+     market list still shows position. */
+  .thin-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  }
+  .thin-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+  .thin-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 2px;
+  }
+  .thin-scrollbar::-webkit-scrollbar-track { background: transparent; }
+}
+
+/* Motion is for press states and sheets. Values never animate — a trader
+   re-reads the same number several times a second and movement makes that
+   harder. This honours the OS setting for everything else. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── UPGRADING THE TYPEFACE ───────────────────────────────────────────────
+   The system stacks are honest defaults, not the finished design. The single
+   highest-impact change to how professional this reads is a real mono for
+   numbers. Self-host rather than using Google's CDN — the keystore's CSP note
+   forbids third-party script and font origins on any route that can unlock a
+   vault, and a font request that blocks first paint is worse than a fallback.
+
+     npm i @fontsource/jetbrains-mono @fontsource/inter
+
+     // main.tsx, before the app import
+     import '@fontsource/jetbrains-mono/400.css';
+     import '@fontsource/jetbrains-mono/600.css';
+     import '@fontsource/inter/400.css';
+     import '@fontsource/inter/700.css';
+
+   Then set:
+     --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+     --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+   JetBrains Mono because its zero is slashed and its 1/l/I are unambiguous,
+   which matters when a user is reading a mint address or a price with six
+   leading zeros. */
