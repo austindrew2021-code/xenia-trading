@@ -136,6 +136,22 @@ export interface BotModeBinding {
 }
 
 /**
+ * A bot as it comes back from Supabase. The column is snake_case, so that is
+ * what these functions accept.
+ *
+ * The camelCase alias is tolerated too, because an object built in TypeScript
+ * rather than read from the DB will often use it. Accepting only one spelling is
+ * what caused this to be wrong the first time: boundMode() took `deployedMode`
+ * while every real bot carried `deployed_mode`, so it fell through to the
+ * default and reported EVERY bot as mock — silently defeating the binding it
+ * exists to enforce.
+ */
+export interface BotModeRow {
+  deployed_mode?: TradingMode | null;
+  deployedMode?: TradingMode | null;
+}
+
+/**
  * A bot's mode is a property of the bot, not of the app.
  *
  * The alternative — reading the global flag at execution time — means flipping a
@@ -146,14 +162,16 @@ export interface BotModeBinding {
  * So: the bot stores its mode at deploy time and keeps it. Changing a bot's mode
  * requires redeploying it, which is a deliberate act with its own confirmation.
  */
-export function boundMode(bot: { deployedMode?: TradingMode }): TradingMode {
+export function boundMode(bot: BotModeRow | null | undefined): TradingMode {
+  const raw = bot?.deployed_mode ?? bot?.deployedMode ?? null;
   // Absent binding means the bot predates this fix. Treat it as mock — the
   // conservative reading — and prompt for redeploy rather than guessing live.
-  return bot.deployedMode ?? 'mock';
+  return raw === 'live' ? 'live' : 'mock';
 }
 
-export function needsRedeployPrompt(bot: { deployedMode?: TradingMode }): boolean {
-  return bot.deployedMode === undefined;
+export function needsRedeployPrompt(bot: BotModeRow | null | undefined): boolean {
+  return (bot?.deployed_mode ?? bot?.deployedMode ?? null) === null
+      || (bot?.deployed_mode ?? bot?.deployedMode) === undefined;
 }
 
 /**
@@ -162,7 +180,7 @@ export function needsRedeployPrompt(bot: { deployedMode?: TradingMode }): boolea
  * not being lied to, but they are being confused.
  */
 export function modeMismatches(
-  appMode: TradingMode, bots: { botId: string; name: string; deployedMode?: TradingMode }[],
+  appMode: TradingMode, bots: (BotModeRow & { botId: string; name: string })[],
 ): { botId: string; name: string; botMode: TradingMode }[] {
   return bots
     .map(b => ({ botId: b.botId, name: b.name, botMode: boundMode(b) }))
