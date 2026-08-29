@@ -109,6 +109,12 @@ function calcPnl(pos: Position, currentPrice: number) {
 
 interface TradingState {
   capital: number;
+  /**
+   * Baseline for the CURRENT mode, kept as a plain number so existing callers
+   * that do arithmetic on it (PnlShareCard, StatsBar) are unaffected. It is
+   * derived: setMode and setCapital both refresh it from the two stores below.
+   */
+  startingCapital: number;
   /** Baseline per mode, so a mode switch cannot corrupt the other one's %. */
   startingCapitalMock: number;
   startingCapitalLive: number;
@@ -142,13 +148,13 @@ interface TradingState {
   visiblePositions: () => XPosition[];
   openPositions: () => XPosition[];
   closedPositions: () => XPosition[];
-  startingCapital: () => number;
 }
 
 export const useTradingStore = create<TradingState>()(
   persist(
     (set, get) => ({
       capital: 0,
+      startingCapital: 0,
       startingCapitalMock: 0,
       startingCapitalLive: 0,
       positions: [],
@@ -162,7 +168,12 @@ export const useTradingStore = create<TradingState>()(
       },
       logs: [],
 
-      setMode: (mode) => set({ mode }),
+      // Switching mode also swaps in that mode's baseline, so `startingCapital`
+      // is always the one that belongs to the balance on screen.
+      setMode: (mode) => set(s => ({
+        mode,
+        startingCapital: mode === 'live' ? s.startingCapitalLive : s.startingCapitalMock,
+      })),
 
       // Changing user clears nothing — the positions stay in storage tagged with
       // their owner and simply stop being visible. Deleting them here would lose
@@ -172,11 +183,13 @@ export const useTradingStore = create<TradingState>()(
       setCapital: (c) => set((s) => {
         const key = s.mode === 'live' ? 'startingCapitalLive' : 'startingCapitalMock';
         const current = s[key];
+        const seeded = current === 0 ? c : current;
         return {
           capital: c,
           // Seed the baseline the first time this mode is ever funded, and only
           // then. A later balance change is performance, not a new baseline.
-          [key]: current === 0 ? c : current,
+          [key]: seeded,
+          startingCapital: seeded,
         } as Partial<TradingState>;
       }),
 
@@ -185,6 +198,7 @@ export const useTradingStore = create<TradingState>()(
         const sc = s.mode === 'live' ? s.startingCapitalLive : s.startingCapitalMock;
         set({
           capital: sc,
+          startingCapital: sc,
           // Only this mode's positions and logs. Resetting mock must never
           // delete a live position, which the previous version did.
           positions: s.positions.filter(p => p.mode !== s.mode),
@@ -347,10 +361,6 @@ export const useTradingStore = create<TradingState>()(
       openPositions: () => get().visiblePositions().filter(p => p.status === 'open'),
       closedPositions: () => get().visiblePositions().filter(p => p.status !== 'open'),
 
-      startingCapital: () => {
-        const s = get();
-        return s.mode === 'live' ? s.startingCapitalLive : s.startingCapitalMock;
-      },
     }),
     {
       name: 'xenia-trading-v3',
@@ -370,9 +380,9 @@ export const useTradingStore = create<TradingState>()(
           }));
           persisted.startingCapitalMock = persisted.startingCapital ?? 0;
           persisted.startingCapitalLive = 0;
+          persisted.startingCapital = persisted.startingCapital ?? 0;
           persisted.mode = persisted.mode ?? 'mock';
           persisted.ownerId = persisted.ownerId ?? null;
-          delete persisted.startingCapital;
         }
         return persisted;
       },
