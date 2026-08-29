@@ -33,8 +33,16 @@ export default function WalletPage() {
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [revealed, setRevealed] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
+  /**
+   * Set only by a passing backup quiz. `finish` reads this rather than inferring
+   * from `origin`, so a future refactor that adds a shortcut into the password
+   * step cannot silently mark an unverified phrase as backed up.
+   */
+  const [phraseVerified, setPhraseVerified] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [unlockPw, setUnlockPw] = useState('');
+  const [busy, setBusy] = useState(false);
+  /** Keyed by address. One shared string leaked what you typed between rows. */
+  const [unlockPw, setUnlockPw] = useState<Record<string, string>>({});
   const [active, setActive] = useState<string | null>(walletSession.address);
 
   const refresh = useCallback(() => { listVaults().then(setVaults); }, []);
@@ -43,15 +51,24 @@ export default function WalletPage() {
 
   const words = useMemo(() => mnemonic?.split(' ') ?? [], [mnemonic]);
 
+  const resetFlow = () => {
+    if (pendingKp) wipe(pendingKp.secretKey);
+    setPendingKp(null);
+    setMnemonic(null);
+    setImportPhrase('');
+    setPassword(''); setPassword2('');
+    setAnswers({}); setChallenge([]);
+    setRevealed(false); setAcknowledged(false); setPhraseVerified(false);
+  };
+
   // ── create ───────────────────────────────────────────────────────────────
   const startCreate = () => {
     setError(null);
+    resetFlow();
     const m = newMnemonic(128);
     setMnemonic(m);
     setPendingKp(keypairFromMnemonic(m));
     setOrigin('generated');
-    setRevealed(false);
-    setAcknowledged(false);
     setStep('reveal');
   };
 
@@ -59,16 +76,22 @@ export default function WalletPage() {
     if (!mnemonic) return;
     setChallenge(backupChallenge(mnemonic, 3));
     setAnswers({});
+    setError(null);
     setStep('verify');
   };
 
   const submitVerify = () => {
     if (!mnemonic) return;
+    if (challenge.some(pos => !(answers[pos] ?? '').trim())) {
+      setError('Fill in all three words.');
+      return;
+    }
     if (!checkBackup(mnemonic, answers)) {
       setError('Those words do not match. Go back and check what you wrote down.');
       return;
     }
     setError(null);
+    setPhraseVerified(true);
     setStep('password');
   };
 
@@ -83,6 +106,10 @@ export default function WalletPage() {
       setPendingKp(keypairFromMnemonic(importPhrase));
       setMnemonic(null);          // an imported phrase is never displayed back
       setOrigin('imported');
+      // The user arrived holding the phrase, so there is nothing for us to quiz
+      // them on — but that is a different fact from "we verified it", and the
+      // two are kept distinct rather than collapsed.
+      setPhraseVerified(false);
       setStep('password');
     } catch (e) {
       setError((e as Error).message);
@@ -95,31 +122,39 @@ export default function WalletPage() {
     if (password.length < 10) return setError('Use at least 10 characters.');
     if (password !== password2) return setError('The two passwords do not match.');
     if (!pendingKp) return setError('Lost the key mid-flow. Start again.');
+    if (origin === 'generated' && !phraseVerified) {
+      return setError('Verify your recovery phrase before saving this wallet.');
+    }
+    setBusy(true);
     try {
       const v = await createVault(
         pendingKp, password, origin === 'generated' ? 'Trading wallet' : 'Imported wallet', origin,
       );
-      v.backupConfirmed = origin === 'generated' ? true : true;
+      // Generated: true because the quiz passed. Imported: true because the user
+      // supplied the phrase and therefore already has it. `session.unlock`
+      // refuses to unlock a vault where this is false.
+      v.backupConfirmed = origin === 'imported' ? true : phraseVerified;
       await saveVault(v);
-      wipe(pendingKp.secretKey);
-      setPendingKp(null);
-      setMnemonic(null);
-      setImportPhrase('');
-      setPassword(''); setPassword2('');
+      resetFlow();
       refresh();
       setStep('ready');
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   };
 
   const unlock = async (v: Vault) => {
     setError(null);
+    setBusy(true);
     try {
-      await walletSession.unlock(v, unlockPw);
-      setUnlockPw('');
+      await walletSession.unlock(v, unlockPw[v.address] ?? '');
+      setUnlockPw(m => ({ ...m, [v.address]: '' }));
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -132,6 +167,7 @@ export default function WalletPage() {
     )) return;
     await deleteVault(v.address);
     if (walletSession.address === v.address) walletSession.lock('wallet removed');
+    setUnlockPw(m => { const n = { ...m }; delete n[v.address]; return n; });
     refresh();
   };
 
@@ -174,11 +210,17 @@ export default function WalletPage() {
                 {active !== v.address && (
                   <div className="mt-2 flex gap-2">
                     <input
-                      type="password" value={unlockPw} placeholder="Password"
-                      onChange={e => setUnlockPw(e.target.value)}
+                      type="password" value={unlockPw[v.address] ?? ''} placeholder="Password"
+                      autoComplete="off"
+                      onChange={e => {
+                        const val = e.target.value;
+                        setUnlockPw(m => ({ ...m, [v.address]: val }));
+                      }}
+                      onKeyDown={e => { if (e.key === 'Enter') unlock(v); }}
                       className={inputCls}
                     />
-                    <button onClick={() => unlock(v)} className={`${btnPrimary} w-24`}>Unlock</button>
+                    <button onClick={() => unlock(v)} disabled={busy}
+                      className={`${btnPrimary} w-24`}>Unlock</button>
                   </div>
                 )}
                 <button onClick={() => forget(v)}
@@ -195,7 +237,7 @@ export default function WalletPage() {
           <div className={`${cardCls} p-3 space-y-2`}>
             <p className={labelCls}>Add a wallet</p>
             <button onClick={startCreate} className={btnPrimary}>Create a new wallet</button>
-            <button onClick={() => { setStep('import'); setError(null); }} className={btnGhost}>
+            <button onClick={() => { resetFlow(); setStep('import'); setError(null); }} className={btnGhost}>
               Import an existing recovery phrase
             </button>
             <p className="text-[10px] text-[#6B7280] leading-relaxed pt-1">
@@ -257,6 +299,9 @@ export default function WalletPage() {
             <button onClick={goVerify} disabled={!revealed || !acknowledged} className={btnPrimary}>
               Continue
             </button>
+            <button onClick={() => { resetFlow(); setStep('choose'); }} className={btnGhost}>
+              Cancel and discard this wallet
+            </button>
           </div>
         )}
 
@@ -272,13 +317,14 @@ export default function WalletPage() {
                 <span className="text-[10px] text-[#4B5563]">Word {pos}</span>
                 <input
                   value={answers[pos] ?? ''} autoComplete="off" autoCapitalize="none"
+                  spellCheck={false}
                   onChange={e => setAnswers(a => ({ ...a, [pos]: e.target.value }))}
                   className={inputCls}
                 />
               </label>
             ))}
             <button onClick={submitVerify} className={btnPrimary}>Verify</button>
-            <button onClick={() => setStep('reveal')} className={btnGhost}>
+            <button onClick={() => { setError(null); setStep('reveal'); }} className={btnGhost}>
               Show the phrase again
             </button>
           </div>
@@ -300,7 +346,7 @@ export default function WalletPage() {
               className={`${inputCls} font-mono resize-none`}
             />
             <button onClick={submitImport} className={btnPrimary}>Continue</button>
-            <button onClick={() => { setStep('choose'); setImportPhrase(''); }} className={btnGhost}>
+            <button onClick={() => { resetFlow(); setStep('choose'); }} className={btnGhost}>
               Cancel
             </button>
           </div>
@@ -315,11 +361,13 @@ export default function WalletPage() {
               recovery phrase and it cannot restore the wallet anywhere else — if you clear this
               browser, the phrase is what gets you back in.
             </p>
-            <input type="password" value={password} placeholder="Password"
+            <input type="password" value={password} placeholder="Password" autoComplete="new-password"
               onChange={e => setPassword(e.target.value)} className={inputCls} />
-            <input type="password" value={password2} placeholder="Password again"
+            <input type="password" value={password2} placeholder="Password again" autoComplete="new-password"
               onChange={e => setPassword2(e.target.value)} className={inputCls} />
-            <button onClick={finish} className={btnPrimary}>Save wallet</button>
+            <button onClick={finish} disabled={busy} className={btnPrimary}>
+              {busy ? 'Encrypting…' : 'Save wallet'}
+            </button>
           </div>
         )}
 
