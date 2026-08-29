@@ -31,6 +31,9 @@ export interface Position {
   peakPrice?: number;
   partialClosed?: boolean;
   flips?: number;
+  mode: 'mock' | 'live';
+  ownerId: string | null;
+  realizedPnl: number;
 }
 
 export interface TradeSignal {
