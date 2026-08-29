@@ -166,7 +166,7 @@ const num = (v: unknown, d = 0) =>
 // ── 1. auditor ─────────────────────────────────────────────────────────────
 
 export async function runAuditor(
-  cfg: PumpConfig, token: PumpToken,
+  cfg: PumpConfig, _token: PumpToken,
   trades: { wallet: string; side: string; amountSol: number; secondsAfterLaunch: number }[],
   holders: { address: string; percentage: number; isSniper?: boolean }[],
   limiter: GrokLimiter,
@@ -213,6 +213,7 @@ Reply ONLY JSON:
 export async function runNarrative(
   cfg: PumpConfig, token: PumpToken, metrics: TokenMetrics, limiter: GrokLimiter,
 ): Promise<NarrativeVerdict> {
+  void token;
   const prompt = `You are analyzing a new memecoin on pump.fun.
 Token: ${token.name} (${token.symbol})
 Description: ${token.description}
