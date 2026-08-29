@@ -30,7 +30,7 @@ export default function PumpPage() {
   const [ack, setAck] = useState(false);
   const [section, setSection] = useState<'run' | 'filter' | 'scoring' | 'risk' | 'agents'>('run');
   const [logs] = useState(() => new TradeLog(5000));
-  const [records, setRecords] = useState<LogRecord[]>([]);
+  const [records] = useState<LogRecord[]>([]);
   const [mockStartedAt, setMockStartedAt] = useState<number | null>(null);
 
   const set = <K extends keyof PumpConfig>(k: K, v: PumpConfig[K]) =>
