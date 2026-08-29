@@ -5,6 +5,65 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Xenia Trading — Mock Leverage Platform</title>
     <meta name="description" content="Mock 100x leverage trading for Solana memecoins" />
+
+    <!--
+      TEMPORARY DIAGNOSTIC — remove before the wallet routes go live.
+
+      It catches anything thrown before React mounts and paints it on the page,
+      so a black screen becomes a readable error on a phone with no DevTools.
+
+      This is an inline script, and the strict CSP the keystore header calls for
+      forbids inline scripts on any route that can unlock a vault. Keeping it
+      past debugging is choosing convenience over the one mitigation that
+      actually protects an unattended signing key.
+    -->
+    <script>
+      (function () {
+        var shown = false;
+        function esc(s) {
+          return String(s).replace(/[<>&]/g, function (c) {
+            return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c];
+          });
+        }
+        function paint(kind, msg, stack) {
+          if (shown) return;
+          shown = true;
+          var d = document.createElement('div');
+          d.setAttribute(
+            'style',
+            'position:fixed;inset:0;z-index:99999;overflow:auto;padding:16px;' +
+              'background:#080B10;color:#F4F6FA;font:12px/1.5 ui-monospace,monospace'
+          );
+          d.innerHTML =
+            '<div style="color:#F87171;font-weight:700;margin-bottom:8px">' + esc(kind) + '</div>' +
+            '<div style="white-space:pre-wrap;word-break:break-word">' + esc(msg) + '</div>' +
+            '<pre style="white-space:pre-wrap;color:#6B7280;margin-top:12px">' +
+              esc(stack || '') +
+            '</pre>';
+          document.body.appendChild(d);
+        }
+        window.addEventListener('error', function (e) {
+          paint('Uncaught error', e.message, e.error && e.error.stack);
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason || {};
+          paint('Unhandled rejection', r.message || r, r.stack);
+        });
+        // If nothing has mounted after 8s, say so rather than staying black.
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          if (root && root.children.length === 0) {
+            paint(
+              'App never mounted',
+              'No error was thrown, but #root is still empty after 8 seconds. ' +
+                'Check the Network tab for a failed module request, and check ' +
+                'that main.tsx actually calls createRoot(...).render(...).',
+              ''
+            );
+          }
+        }, 8000);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
