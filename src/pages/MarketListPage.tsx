@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { fmtAge, fmtPriceCompact, fmtUsdBare, num, t } from '../ui';
 
 // ── Xenia — Market list ────────────────────────────────────────────────────
 //
@@ -68,39 +69,6 @@ export interface MarketListProps {
   onToggleWatchlist?: (m: MarketRow) => void;
   /** Shown in the header so a stale feed is visible rather than assumed live. */
   lastUpdated?: number;
-}
-
-const num = 'font-mono tabular-nums tracking-tight';
-const eyebrow = 'text-[9px] uppercase tracking-[0.14em] text-[#4B5563] font-semibold';
-
-function px(v: number): string {
-  if (!Number.isFinite(v)) return '—';
-  const a = Math.abs(v);
-  if (a >= 1000) return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  if (a >= 1) return v.toFixed(3);
-  if (a >= 0.01) return v.toFixed(4);
-  if (a >= 0.0001) return v.toFixed(6);
-  return v.toPrecision(3);
-}
-
-function usd(v?: number): string {
-  if (v === undefined || !Number.isFinite(v)) return '—';
-  const a = Math.abs(v);
-  if (a >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
-  if (a >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
-  if (a >= 1e3) return `${(v / 1e3).toFixed(0)}K`;
-  return v.toFixed(0);
-}
-
-/** Compact age. Minutes matter most here — a 4m pair is a different animal. */
-function age(createdAt?: number): string {
-  if (!createdAt) return '—';
-  const mins = (Date.now() - createdAt) / 60000;
-  if (mins < 1) return 'now';
-  if (mins < 60) return `${Math.floor(mins)}m`;
-  if (mins < 1440) return `${Math.floor(mins / 60)}h`;
-  const d = Math.floor(mins / 1440);
-  return d < 365 ? `${d}d` : `${Math.floor(d / 365)}y`;
 }
 
 // ── sparkline ──────────────────────────────────────────────────────────────
@@ -303,7 +271,7 @@ export default function MarketListPage(props: MarketListProps) {
           <button
             key={c.key}
             onClick={() => toggleSort(c.key)}
-            className={`${c.className} ${eyebrow} flex items-center gap-0.5 ${
+            className={`${c.className} ${t.label} flex items-center gap-0.5 ${
               sortKey === c.key ? 'text-[#2BFFF1]' : ''
             } ${c.className.includes('text-right') ? 'justify-end' : ''}`}
           >
@@ -319,7 +287,7 @@ export default function MarketListPage(props: MarketListProps) {
       <div className="flex-1 overflow-y-auto">
         {loading && rows.length === 0 ? (
           <div className="py-16 text-center">
-            <span className={eyebrow}>Loading markets</span>
+            <span className={t.label}>Loading markets</span>
           </div>
         ) : rows.length === 0 ? (
           <div className="py-16 px-8 text-center">
@@ -357,7 +325,7 @@ export default function MarketListPage(props: MarketListProps) {
                     <div className="flex items-center gap-1.5">
                       <span className="text-[12px] font-bold truncate">{m.symbol}</span>
                       {m.createdAt && Date.now() - m.createdAt < 3600_000 && (
-                        <span className={`${eyebrow} text-[#2BFFF1]`}>{age(m.createdAt)}</span>
+                        <span className={`${t.label} text-[#2BFFF1]`}>{fmtAge(m.createdAt)}</span>
                       )}
                     </div>
                     {flags.length > 0 ? (
@@ -378,14 +346,14 @@ export default function MarketListPage(props: MarketListProps) {
                   </div>
 
                   <span className={`${num} w-[70px] text-right text-[11px] font-semibold`}>
-                    {px(m.price)}
+                    {fmtPriceCompact(m.price)}
                   </span>
                   <span className={`${num} w-[56px] text-right text-[11px] font-bold ${
                     up ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
                     {up ? '+' : ''}{m.change24hPct.toFixed(1)}%
                   </span>
                   <span className={`${num} w-[48px] text-right text-[10px] text-[#6B7280]`}>
-                    {usd(m.volume24hUsd)}
+                    {fmtUsdBare(m.volume24hUsd)}
                   </span>
 
                   {onToggleWatchlist && (
@@ -410,7 +378,7 @@ export default function MarketListPage(props: MarketListProps) {
             })}
             <div ref={sentinel} className="h-8" />
             {shown < rows.length && (
-              <p className={`${eyebrow} text-center pb-3`}>
+              <p className={`${t.label} text-center pb-3`}>
                 {shown} of {rows.length}
               </p>
             )}
@@ -422,9 +390,9 @@ export default function MarketListPage(props: MarketListProps) {
       {lastUpdated && (
         <div className="px-3 py-1 border-t border-white/[0.06] flex items-center gap-1.5">
           <span className={`w-1 h-1 rounded-full ${stale ? 'bg-[#F59E0B]' : 'bg-[#10B981]'}`} />
-          <span className={eyebrow}>
+          <span className={t.label}>
             {stale
-              ? `Prices last updated ${age(lastUpdated)} ago`
+              ? `Prices last updated ${fmtAge(lastUpdated)} ago`
               : `${rows.length} markets · live`}
           </span>
         </div>
