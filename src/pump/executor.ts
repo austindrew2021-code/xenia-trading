@@ -63,7 +63,7 @@ export class MockExecutor implements PumpExecutor {
   readonly mode = 'mock' as const;
   constructor(private cfg: PumpConfig) {}
 
-  async buy(token: PumpToken, amountSol: number): Promise<ExecResult> {
+  async buy(token: PumpToken, _amountSol: number): Promise<ExecResult> {
     const p = await this.price(token.address);
     return {
       ok: p > 0, txHash: 'mock', fillPrice: p,
