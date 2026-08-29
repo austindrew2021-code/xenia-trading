@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from './auth/AuthContext';
-import { useTradingStore } from './store';
+import { useTradingStore, selectOpen, selectClosed } from './store';
 import { usePriceData, TOP_ASSETS, searchPumpTokens, SearchAsset, AssetId, INTERVALS } from './hooks/usePriceData';
 import { useBotEngine } from './hooks/useBotEngine';
 import { BotPanel } from './components/BotPanel';
@@ -27,18 +27,46 @@ import { BuySellPressure } from './components/BuySellPressure';
 import { Side } from './types';
 import { TouchGrassModal, TouchGrassActive, useTouchGrass } from './components/TouchGrassMode';
 import { PnlShareCard } from './components/PnlShareCard';
-// ── NEW ────────────────────────────────────────────────────────────
 import BacktestPage from './pages/BacktestPage';
 import WalletPage from './pages/WalletPage';
 import PumpPage from './pages/PumpPage';
 import { tradingMode, LIVE_CONFIRMATION } from './lib/tradingMode';
-// ───────────────────────────────────────────────────────────────────
 
-// CHANGED: 'lab' stays BotLabPage. The research engine gets its own id, plus
-// pump and wallet.
+// ── WHAT CHANGED IN THIS FILE ──────────────────────────────────────────────
+//
+// Every read of `positions` used to take the whole persisted array. That array
+// now carries positions from both modes and from every user who has signed in
+// on this browser, so a raw read shows mock trades against a live balance and
+// another account's trades against yours.
+//
+// Each of those reads now goes through selectOpen / selectClosed with the
+// current mode and owner. Those are pure functions over the raw array rather
+// than store methods, because a method reading via get() creates no
+// subscription — the component would render a stale list until something else
+// forced an update.
+//
+// Two new effects keep the store's mode and owner aligned with the DB. Order
+// matters: setMode must run before setCapital, or the first balance sync seeds
+// the baseline for the wrong mode and the capital-change percentage is wrong
+// for the life of the persisted store.
+
 type Page = 'home'|'trade'|'spot'|'markets'|'p2p'|'earn'|'discover'|'settings'|'copy'|'lab'|'research'|'pump'|'wallet';
 type SubNav = { tab?: string; rightTab?: string; discoverTab?: string; earnTab?: string };
 const SUPABASE_URL = (import.meta as any).env?.VITE_TRADING_SUPABASE_URL || 'https://ofjuiciwmwahdwdagzsj.supabase.co';
+
+/**
+ * One hook for "the positions this user can see in this mode". Every component
+ * below uses it so there is a single definition of visibility.
+ */
+function useVisiblePositions() {
+  const positions = useTradingStore(s => s.positions);
+  const mode = useTradingStore(s => s.mode);
+  const ownerId = useTradingStore(s => s.ownerId);
+  return useMemo(() => ({
+    open: selectOpen(positions, mode, ownerId),
+    closed: selectClosed(positions, mode, ownerId),
+  }), [positions, mode, ownerId]);
+}
 
 /* ── Asset Selector ──────────────────────────────────────────────── */
 function AssetSelector({ current, onChange }: { current: string; onChange: (id: string, addr?: string, pair?: string) => void }) {
@@ -92,8 +120,18 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: { l
 
   const sizeN = parseFloat(size) || 0, levN = Math.min(parseInt(lev) || 1, 300), notional = sizeN * levN, liqPct = (1/levN)*0.9;
   const isHighLev = levN > 50, isExtrLev = levN > 100, needsWarn = isHighLev && !warnAck;
-  // DB is source of truth for balance
   const cap = account ? (account.use_real ? account.real_balance : account.mock_balance) : capital;
+
+  // Round-trip cost as a fraction of the distance to the stop. This is the
+  // number that decides whether a setup can be profitable at all: at high
+  // leverage with a tight stop, fees and slippage consume the risk budget
+  // before direction matters. Shown only when a stop is set, because without
+  // one there is no defined risk to divide by.
+  const slN = parseFloat(sl) || 0;
+  const stopDistPct = slN > 0 && livePrice > 0 ? Math.abs(livePrice - slN) / livePrice : 0;
+  const ROUND_TRIP_PCT = 0.11;   // 0.055% per side; replace with the venue's real figure
+  const costInR = stopDistPct > 0 ? (ROUND_TRIP_PCT / 100) / stopDistPct : 0;
+  const stopBeyondLiq = slN > 0 && (side === 'LONG' ? slN <= livePrice * (1 - liqPct) : slN >= livePrice * (1 + liqPct));
 
   if (!account) return <div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 flex flex-col items-center gap-3"><div className="w-8 h-8 border-2 border-[#2BFFF1]/20 border-t-[#2BFFF1] rounded-full animate-spin"/><p className="text-xs text-[#4B5563]">Loading…</p></div>;
 
@@ -103,7 +141,6 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: { l
     const isLive = account.use_real;
     addLog(`${isLive ? '🔴 LIVE' : '📌'} ${side} ${asset} $${sizeN} ×${levN} @ $${livePrice.toFixed(4)}`);
     const field = isLive ? 'real_balance' : 'mock_balance';
-    // Server-side trade for live mode
     if (isLive) {
       try {
         const { supabase } = await import('./lib/supabase');
@@ -115,7 +152,6 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: { l
         }
       } catch {}
     }
-    // Deduct locally + refresh from DB
     await saveAccount({ [field]: Math.max(0, cap - sizeN) } as any);
     try { await refreshBalance(); } catch {}
     recordTrade(notional, 0, false);
@@ -139,6 +175,21 @@ function TradeForm({ livePrice, asset, chartTP, chartSL, onClearChartTPSL }: { l
       {isExtrLev && <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2.5"><p className="text-[10px] text-red-400 font-bold">⚠️ EXTREME — {levN}× ({((1/levN)*100).toFixed(2)}% to liq)</p></div>}
       {isHighLev && !isExtrLev && <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/08 p-2.5"><p className="text-[10px] text-yellow-400 font-semibold">⚡ {levN}× — liq in {((1/levN)*100).toFixed(1)}%</p></div>}
       {[['TP Price',tp,setTp],['SL Price',sl,setSl]].map(([l,v,s]: any) => <div key={l} className="flex items-center gap-2"><span className="text-[10px] text-[#6B7280] w-16 flex-shrink-0">{l}</span><input type="number" value={v} placeholder="Optional" onChange={e => s(e.target.value)} className="flex-1 bg-[#0B0E14] border border-white/[0.08] rounded-lg px-2 py-1.5 text-xs text-[#F4F6FA] outline-none focus:border-[#2BFFF1]/40"/></div>)}
+
+      {/* Cost as a share of risk. No other retail terminal shows this, and it is
+          the single most useful number at the moment of sizing. */}
+      {stopDistPct > 0 && (
+        <div className="rounded-xl bg-[#0B0E14] px-3 py-2.5">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[10px] text-[#4B5563]">Costs eat</span>
+            <span className="text-[11px] font-bold font-mono tabular-nums" style={{ color: costInR > 0.35 ? '#F87171' : costInR > 0.15 ? '#F59E0B' : '#4ADE80' }}>{costInR.toFixed(2)}R</span>
+          </div>
+          <div className="h-1 rounded-full bg-white/[0.06] mt-1 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${Math.min(100, costInR*100)}%`, background: costInR > 0.35 ? '#EF4444' : costInR > 0.15 ? '#F59E0B' : '#10B981' }}/></div>
+          <p className="text-[9px] text-[#6B7280] leading-snug mt-1.5">Fees and slippage take {costInR.toFixed(2)} of every 1R you risk. At a 50% hit rate you need better than {(1 + 2*costInR).toFixed(2)}R to break even.{costInR > 0.35 ? ' Widen the stop or cut leverage — costs are eating the edge before direction does.' : ''}</p>
+        </div>
+      )}
+      {stopBeyondLiq && <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-2.5"><p className="text-[10px] text-red-400 font-semibold">Your stop sits past liquidation. You would be liquidated before it fills.</p></div>}
+
       <div className="rounded-xl bg-[#0B0E14] px-3 py-2.5 space-y-1.5">{([['Notional',`$${notional.toFixed(0)}`],[`Liq ~${(liqPct*100).toFixed(2)}%`,`$${(side==='LONG'?livePrice*(1-liqPct):livePrice*(1+liqPct)).toFixed(6)}`],['Available',account.use_real?(liveSOL>0?`${liveSOL.toFixed(4)} SOL`:`$${cap.toFixed(2)}`):`$${cap.toFixed(2)}`,sizeN>cap?'#F87171':'#4ADE80']] as [string,string,string?][]).map(([k,v,c]) => <div key={k} className="flex justify-between text-[10px]"><span className="text-[#4B5563]">{k}</span><span style={{color:c??'#A7B0B7'}}>{v}</span></div>)}</div>
       {confirmLive && account.use_real && (
         <div className="rounded-xl border border-[#F59E0B]/30 bg-[#F59E0B]/08 p-3 space-y-2"><p className="text-xs font-bold text-[#F59E0B]">Confirm LIVE Trade</p><p className="text-[10px] text-[#A7B0B7]">{side} {asset} · ${sizeN} × {levN}× = ${notional.toFixed(0)}</p><div className="rounded-lg bg-red-500/10 border border-red-500/20 px-2 py-1.5"><p className="text-[9px] text-red-400 font-semibold">Real funds. Cannot be undone.</p></div><div className="flex gap-2"><button onClick={() => setConfirmLive(false)} className="flex-1 py-2 rounded-xl border border-white/[0.08] text-xs font-bold text-[#A7B0B7]">Cancel</button><button onClick={executeTrade} className="flex-1 py-2 rounded-xl text-xs font-bold bg-[#F59E0B]/20 text-[#F59E0B] border border-[#F59E0B]/30">Execute</button></div></div>
@@ -158,16 +209,27 @@ function IndicatorsPanel({ prices }: { prices: number[] }) {
 }
 
 /* ── Stats Bar ───────────────────────────────────────────────────── */
+// CHANGED: reads only this mode's and this user's positions, and takes the
+// baseline for the CURRENT mode rather than a single global one. Previously a
+// live balance was compared against a mock starting point and reported nonsense.
 function StatsBar() {
-  const { capital, positions, startingCapital } = useTradingStore();
+  const { capital } = useTradingStore();
+  const startingCapitalMock = useTradingStore(s => s.startingCapitalMock);
+  const startingCapitalLive = useTradingStore(s => s.startingCapitalLive);
+  const mode = useTradingStore(s => s.mode);
+  const { open, closed } = useVisiblePositions();
   const { account, liveSOL } = useAuth();
-  const closed = positions.filter(p => p.status !== 'open'), wins = closed.filter(p => p.pnl > 0).length;
-  const tPnl = closed.reduce((s,p) => s+p.pnl, 0), oPnl = positions.filter(p => p.status === 'open').reduce((s,p) => s+p.pnl, 0);
+
+  const wins = closed.filter(p => p.pnl > 0).length;
+  const tPnl = closed.reduce((s,p) => s+p.pnl, 0);
+  const oPnl = open.reduce((s,p) => s+p.pnl, 0);
   const wr = closed.length > 0 ? (wins/closed.length)*100 : 0;
   const cap = account ? (account.use_real ? account.real_balance : account.mock_balance) : capital;
   const capL = account?.use_real && liveSOL > 0 ? `${liveSOL.toFixed(4)} SOL` : `$${cap.toFixed(2)}`;
-  const cc = startingCapital > 0 ? ((cap-startingCapital)/startingCapital)*100 : 0;
-  return (<div className="grid grid-cols-2 md:grid-cols-4 gap-2">{[{l:account?.use_real?'Live':'Capital',v:capL,sub:`${cc>=0?'+':''}${cc.toFixed(1)}%`,c:cc>=0?'#4ADE80':'#F87171'},{l:'Realized',v:`${tPnl>=0?'+':''}$${tPnl.toFixed(2)}`,c:tPnl>=0?'#4ADE80':'#F87171'},{l:'Unrealized',v:`${oPnl>=0?'+':''}$${oPnl.toFixed(2)}`,c:oPnl>=0?'#4ADE80':'#F87171'},{l:'Win Rate',v:`${wr.toFixed(0)}%`,sub:`${wins}/${closed.length}`,c:'#A7B0B7'}].map(s => <div key={s.l} className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-3 py-2.5"><p className="text-[10px] text-[#4B5563] mb-0.5">{s.l}</p><p className="text-sm font-bold" style={{color:s.c}}>{s.v}</p>{s.sub && <p className="text-[10px] text-[#6B7280]">{s.sub}</p>}</div>)}</div>);
+  const base = mode === 'live' ? startingCapitalLive : startingCapitalMock;
+  const cc = base > 0 ? ((cap-base)/base)*100 : 0;
+
+  return (<div className="grid grid-cols-2 md:grid-cols-4 gap-2">{[{l:account?.use_real?'Live':'Capital',v:capL,sub:`${cc>=0?'+':''}${cc.toFixed(1)}%`,c:cc>=0?'#4ADE80':'#F87171'},{l:'Realized',v:`${tPnl>=0?'+':''}$${tPnl.toFixed(2)}`,c:tPnl>=0?'#4ADE80':'#F87171'},{l:'Unrealized',v:`${oPnl>=0?'+':''}$${oPnl.toFixed(2)}`,c:oPnl>=0?'#4ADE80':'#F87171'},{l:'Win Rate',v:closed.length>=20?`${wr.toFixed(0)}%`:'—',sub:closed.length>=20?`${wins}/${closed.length}`:`${closed.length}/20 trades`,c:'#A7B0B7'}].map(s => <div key={s.l} className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-3 py-2.5"><p className="text-[10px] text-[#4B5563] mb-0.5">{s.l}</p><p className="text-sm font-bold" style={{color:s.c}}>{s.v}</p>{s.sub && <p className="text-[10px] text-[#6B7280]">{s.sub}</p>}</div>)}</div>);
 }
 
 function ActivityLog() {
@@ -175,42 +237,11 @@ function ActivityLog() {
   return (<div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 h-full flex flex-col"><p className="text-xs font-semibold text-[#A7B0B7] uppercase tracking-widest mb-3 flex-shrink-0">Activity</p><div className="flex-1 overflow-y-auto space-y-1 min-h-0">{logs.length===0?<p className="text-[11px] text-[#4B5563]">No activity yet</p>:logs.map((l,i)=><p key={i} className="text-[10px] text-[#6B7280] font-mono leading-relaxed">{l}</p>)}</div></div>);
 }
 
-/* ── Live/Mock Toggle ────────────────────────────────────────────────
-   REWRITTEN. The previous version had three bugs in eight lines:
-
-   1. NO CONFIRMATION. SettingsPage shows a full warning modal before enabling
-      live; this flipped the same flag with one tap. Same state, two entry
-      points, one unguarded.
-
-   2. STALE CLOSURE.
-          await saveAccount({ use_real: newMode });
-          await refreshBalance();
-          setCapital(newMode ? account.real_balance : account.mock_balance);
-      `account` is captured from the render closure. refreshBalance() updates the
-      store, but this component has not re-rendered, so it read the PRE-refresh
-      balance and the user saw the wrong number after switching.
-
-   3. NO PRECONDITIONS. Live could be enabled with a $0 balance or an
-      unbacked-up wallet; Settings only warned about it afterwards.
-
-   All three now route through tradingMode, which is the single place mode
-   changes — see src/lib/tradingMode.ts.
-
-   ONE DEPENDENCY: AuthContext.refreshBalance() must RETURN the fresh balances,
-   not only set state. That is the fix for (2), and it is a one-line change:
-
-       const refreshBalance = async () => {
-         const { data } = await supabase.from('trading_accounts')...single();
-         setAccount(data);
-         return data;            // <-- add this
-       };
-
-   Until you make that change the fallback below uses the values saveAccount was
-   given, which is correct for the field just written but not for the other one.
-   ─────────────────────────────────────────────────────────────────── */
+/* ── Live/Mock Toggle ─────────────────────────────────────────────── */
 function LiveMockToggle() {
   const { account, saveAccount, refreshBalance } = useAuth();
-  const { setCapital, positions } = useTradingStore();
+  const { setCapital } = useTradingStore();
+  const { open } = useVisiblePositions();
   const [dialog, setDialog] = useState<{ warnings: string[] } | null>(null);
   const [blockers, setBlockers] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -218,10 +249,9 @@ function LiveMockToggle() {
 
   if (!account) return null;
 
-  // Bots keep the mode they were deployed in — see boundMode() in tradingMode.ts.
-  // Counted here only so the user is warned that flipping the app flag does NOT
-  // re-target them.
-  const activeBotCount = positions.filter((p: any) => p.status === 'open' && p.source && p.source !== 'manual').length;
+  // Bots keep the mode they were deployed in. Counted here only so the user is
+  // warned that flipping the app flag does NOT re-target them.
+  const activeBotCount = open.filter(p => p.openedBy && p.openedBy !== 'manual').length;
 
   const preconditions = {
     liveBalance: account.real_balance ?? 0,
@@ -242,7 +272,7 @@ function LiveMockToggle() {
   const apply = async (target: 'mock' | 'live') => {
     setBusy(true);
     const res = await tradingMode.commit(target, preconditions, persist);
-    if (res.ok) setCapital(tradingMode.balance);   // fresh, not from a closure
+    if (res.ok) setCapital(tradingMode.balance);
     setBusy(false);
     setDialog(null);
     setAck(false);
@@ -252,7 +282,6 @@ function LiveMockToggle() {
     const target = account.use_real ? 'mock' : 'live';
     const check = tradingMode.requestTransition(target, preconditions);
     if (!check.allowed) { setBlockers(check.blockers); return; }
-    // Returning to mock never asks. Retreating to safety should be one tap.
     if (!check.requiresConfirmation) { void apply(target); return; }
     setDialog({ warnings: check.warnings });
   };
@@ -295,34 +324,32 @@ function LiveMockToggle() {
 }
 
 /* ── Mobile Nav ──────────────────────────────────────────────────── */
-// CHANGED: 'research' added. Six tabs is already the practical ceiling on a
-// phone, so Settings moves into the More/Settings page rather than adding a 7th.
 const NAV: {id:Page;label:string;d:string}[] = [
   {id:'home',label:'Home',d:'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z'},
   {id:'trade',label:'Leverage',d:'M18 20V10M12 20V4M6 20v-6'},
   {id:'spot',label:'Spot',d:'M22 12l-4 0-3 9-6-18-3 9-4 0'},
   {id:'pump',label:'Pump',d:'M13 2L3 14h9l-1 8 10-12h-9l1-8z'},
   {id:'lab',label:'Lab',d:'M9 3h6v8l4 8H5l4-8V3z'},
-  {id:'settings',label:'Settings',d:''},
+  {id:'settings',label:'Settings',d:'M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H2a2 2 0 110-4h.09A1.65 1.65 0 004.6 8a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 008 3.68 1.65 1.65 0 009 2.17V2a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 8v0c.28.67.93 1.11 1.65 1.11H21a2 2 0 110 4h-.09c-.72 0-1.37.44-1.65 1.11z'},
 ];
 function MobileNav({ page, setPage }: { page: Page; setPage: (p: Page) => void }) {
-  return (<div className="fixed bottom-0 left-0 right-0 z-50 bg-[#0B0E14]/96 backdrop-blur-sm border-t border-white/[0.06] flex md:hidden">{NAV.map(n => (<button key={n.id} onClick={() => setPage(n.id)} className={`flex-1 flex flex-col items-center gap-1 py-3 ${page===n.id?'text-[#2BFFF1]':'text-[#374151]'}`}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={n.d}/></svg><span className="text-[9px] font-semibold">{n.label}</span></button>))}</div>);
+  return (<div className="fixed bottom-0 left-0 right-0 z-50 bg-[#0B0E14]/96 backdrop-blur-sm border-t border-white/[0.06] flex md:hidden" style={{paddingBottom:'env(safe-area-inset-bottom)'}}>{NAV.map(n => (<button key={n.id} onClick={() => setPage(n.id)} className={`flex-1 flex flex-col items-center gap-1 py-3 min-h-[48px] ${page===n.id?'text-[#2BFFF1]':'text-[#374151]'}`}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={n.d}/></svg><span className="text-[9px] font-semibold">{n.label}</span></button>))}</div>);
 }
 
 /* ── Mobile Trade ────────────────────────────────────────────────── */
 function MobileTrade({ assetId, livePrice, change24h, candles, prices, assetLabel, onChangeAsset, interval, setInterval, chartTP, chartSL, onSetTP, onSetSL }: any) {
   const [tab, setTab] = useState<'chart'|'trade'|'bots'|'board'>('chart');
-  const { positions } = useTradingStore();
+  const { open } = useVisiblePositions();
   return (<div className="flex flex-col h-full pb-16">
     <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.06] flex-shrink-0 overflow-x-auto">
       <AssetSelector current={assetId} onChange={onChangeAsset}/>
-      <span className={`text-sm font-bold ml-1 font-mono ${change24h>=0?'text-green-400':'text-red-400'}`}>{livePrice>0?formatPrice(livePrice):'—'}</span>
-      <span className={`text-xs ${change24h>=0?'text-green-400':'text-red-400'}`}>{change24h>=0?'+':''}{change24h.toFixed(2)}%</span>
+      <span className={`text-sm font-bold ml-1 font-mono tabular-nums ${change24h>=0?'text-green-400':'text-red-400'}`}>{livePrice>0?formatPrice(livePrice):'—'}</span>
+      <span className={`text-xs font-mono tabular-nums ${change24h>=0?'text-green-400':'text-red-400'}`}>{change24h>=0?'+':''}{change24h.toFixed(2)}%</span>
       <div className="flex items-center gap-1 ml-auto flex-shrink-0">{INTERVALS.map((i:string) => <button key={i} onClick={() => setInterval(i)} className={`px-1.5 py-1 rounded text-[10px] font-bold ${interval===i?'bg-[#2BFFF1]/15 text-[#2BFFF1] border border-[#2BFFF1]/20':'text-[#4B5563]'}`}>{i}</button>)}<LiveMockToggle/></div>
     </div>
     <div className="flex border-b border-white/[0.06] flex-shrink-0">{([['chart','Chart'],['trade','Trade'],['bots','Bots'],['board','Rankings']] as const).map(([t,l]) => <button key={t} onClick={() => setTab(t as any)} className={`flex-1 py-2 text-[10px] font-semibold ${tab===t?'text-[#2BFFF1] border-b-2 border-[#2BFFF1]':'text-[#4B5563]'}`}>{l}</button>)}</div>
     <div className="flex-1 overflow-hidden">
-      {tab==='chart' && <div className="h-full flex flex-col"><div className="flex-1 min-h-0 p-2"><PriceChart candles={candles} livePrice={livePrice} positions={positions} onPlaceOrder={(_s:any,tp:any,sl:any)=>{if(tp!=null) onSetTP?.(tp);if(sl!=null) onSetSL?.(sl);setTab('trade');}}/></div><div className="p-3 border-t border-white/[0.06] flex-shrink-0"><StatsBar/></div><div className="flex-1 overflow-y-auto p-3 min-h-0"><PositionsTable livePrice={livePrice}/></div></div>}
+      {tab==='chart' && <div className="h-full flex flex-col"><div className="flex-1 min-h-0 p-2"><PriceChart candles={candles} livePrice={livePrice} positions={open} onPlaceOrder={(_s:any,tp:any,sl:any)=>{if(tp!=null) onSetTP?.(tp);if(sl!=null) onSetSL?.(sl);setTab('trade');}}/></div><div className="p-3 border-t border-white/[0.06] flex-shrink-0"><StatsBar/></div><div className="flex-1 overflow-y-auto p-3 min-h-0"><PositionsTable livePrice={livePrice}/></div></div>}
       {tab==='trade' && <div className="overflow-y-auto h-full p-3 space-y-3"><TradeForm livePrice={livePrice} asset={assetLabel} chartTP={chartTP} chartSL={chartSL} onClearChartTPSL={()=>{onSetTP?.(null);onSetSL?.(null);}}/><IndicatorsPanel prices={prices}/><BuySellPressure candles={candles} livePrice={livePrice} asset={assetLabel} assetId={assetId}/></div>}
       {tab==='bots' && <div className="overflow-y-auto h-full p-3 space-y-3"><LabBotPanel target="leverage" isMock={true} compact={true}/><BotPanel/><ActivityLog/></div>}
       {tab==='board' && <div className="overflow-y-auto h-full p-4"><PointsLeaderboard/></div>}
@@ -355,21 +382,39 @@ export default function App() {
   const { showModal: showTG, grassActive, handleActivate: tgActivate, handleSkip: tgSkip, handleDeactivate: tgDeactivate } = useTouchGrass();
 
   const { candles, livePrice, loading, change24h, prices, asset } = usePriceData(assetId, interval, customAddr, customPair);
-  const { capital, setCapital, positions } = useTradingStore();
+  const { capital, setCapital, setMode, setOwner } = useTradingStore();
+  const { open: openPositions } = useVisiblePositions();
   const { user, account, signOut, loading: authLoading, liveSOL } = useAuth();
   useBotEngine({ prices, livePrice, asset: asset.label, candles });
 
   useEffect(() => { setFlash(true); setTimeout(() => setFlash(false), 300); }, [livePrice]);
 
-  // Capital sync — DB is source of truth
+  // ── mode and owner, BEFORE the capital sync ─────────────────────────────
+  // Order is load-bearing. setCapital seeds the starting-capital baseline for
+  // whichever mode the store currently holds, and that baseline is written once
+  // and kept. If the balance lands before the mode does, the live baseline gets
+  // seeded from a mock balance and every capital-change percentage after that
+  // is wrong for the life of the persisted store.
+  useEffect(() => {
+    if (!account) return;
+    setMode(account.use_real ? 'live' : 'mock');
+  }, [account?.use_real, setMode]);
+
+  // Positions are persisted to localStorage, which is per-browser rather than
+  // per-account. Stamping the owner is what stops a second user on the same
+  // device inheriting the first one's open trades.
+  useEffect(() => { setOwner(user?.id ?? null); }, [user?.id, setOwner]);
+
+  // Capital sync — DB is source of truth. Runs after the two effects above
+  // because it is declared after them.
   useEffect(() => {
     if (!account) return;
     setCapital(account.use_real ? account.real_balance : account.mock_balance);
   }, [account?.use_real, account?.real_balance, account?.mock_balance, setCapital]);
 
-  // NEW: keep the shared mode store aligned with the DB, so anything reading it
-  // outside a component tree (bots, runner, sweeper) sees the same answer as the
-  // header does. This is what stops CopyTradePage and the header disagreeing.
+  // Keep the shared mode store aligned with the DB so anything reading it
+  // outside a component tree (bots, runner, sweeper) sees the same answer as
+  // the header does.
   useEffect(() => {
     if (!account) return;
     tradingMode.setBalances({
@@ -391,11 +436,18 @@ export default function App() {
 
   if (authLoading) return <div className="min-h-screen bg-[#05060B] flex items-center justify-center"><div className="w-8 h-8 border-2 border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/></div>;
 
-  // CHANGED: Research, Pump and Wallet added to the desktop nav.
   const dNav: {id:Page;label:string}[] = [{id:'home',label:'Home'},{id:'trade',label:'Leverage'},{id:'spot',label:'Spot'},{id:'pump',label:'Pump'},{id:'markets',label:'Markets'},{id:'discover',label:'Discover'},{id:'earn',label:'Earn'},{id:'copy',label:'Copy'},{id:'lab',label:'The Lab'},{id:'research',label:'Research'},{id:'wallet',label:'Wallet'}];
 
   return (
     <div className="h-screen bg-[#05060B] flex flex-col overflow-hidden" style={{fontFamily:'-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif'}}>
+
+      {/* ── Live band: the mode must be impossible to miss ────── */}
+      {account?.use_real && (
+        <div className="flex-shrink-0 bg-red-500/12 border-b border-red-500/30 px-4 py-1 flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-400"/>
+          <span className="text-[9px] uppercase tracking-[0.14em] font-semibold text-red-400">Live — trades spend real funds</span>
+        </div>
+      )}
 
       {/* ── Header ───────────────────────────────────────────── */}
       <div className="border-b border-white/[0.06] bg-[#05060B]/90 backdrop-blur-sm sticky top-0 z-50 flex-shrink-0">
@@ -405,17 +457,15 @@ export default function App() {
             <div className="hidden sm:block"><span className="font-bold text-[#F4F6FA] text-sm">Xenia</span><span className="text-[#2BFFF1] font-bold text-sm"> Trading</span></div>
           </button>
           <nav className="hidden md:flex items-center gap-0.5 ml-2 overflow-x-auto">{dNav.map(({id,label}) => <button key={id} onClick={() => setPage(id)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${page===id?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563] hover:text-[#A7B0B7]'}`}>{label}</button>)}</nav>
-          {page==='trade' && <div className="hidden md:flex items-center gap-2 ml-2"><span className={`text-base font-bold font-mono ${flash?'text-[#2BFFF1]':'text-[#F4F6FA]'}`}>{livePrice>0?formatPrice(livePrice):'—'}</span><span className={`text-xs font-semibold ${change24h>=0?'text-green-400':'text-red-400'}`}>{change24h>=0?'+':''}{change24h.toFixed(2)}%</span>{loading && <div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>}</div>}
+          {page==='trade' && <div className="hidden md:flex items-center gap-2 ml-2"><span className={`text-base font-bold font-mono tabular-nums ${flash?'text-[#2BFFF1]':'text-[#F4F6FA]'}`}>{livePrice>0?formatPrice(livePrice):'—'}</span><span className={`text-xs font-semibold font-mono tabular-nums ${change24h>=0?'text-green-400':'text-red-400'}`}>{change24h>=0?'+':''}{change24h.toFixed(2)}%</span>{loading && <div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>}</div>}
           <div className="ml-auto flex items-center gap-2">
-            {/* NEW: the mode toggle is now always visible in the header, not only
-                on the mobile trade screen. One control, one guarded path. */}
             <div className="hidden md:block"><LiveMockToggle/></div>
             <PointsBadge/>
             {user ? (<>
               <button onClick={() => setShowWallet(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[#2BFFF1]/20 bg-[#2BFFF1]/05 hover:bg-[#2BFFF1]/10 transition-all">
                 <div className={`w-2 h-2 rounded-full ${account?.use_real?'bg-[#2BFFF1] shadow-[0_0_6px_#2BFFF1] animate-pulse':'bg-[#374151]'}`}/>
                 <span className="text-xs font-semibold text-[#F4F6FA] max-w-[100px] truncate">{account?.username || user.email?.split('@')[0]}</span>
-                <span className="text-xs font-bold font-mono" style={{color:account?.use_real?'#2BFFF1':'#6B7280'}}>{dispCapLabel}</span>
+                <span className="text-xs font-bold font-mono tabular-nums" style={{color:account?.use_real?'#2BFFF1':'#6B7280'}}>{dispCapLabel}</span>
               </button>
               <button onClick={() => setShowTransfer(true)} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-white/[0.07] text-[#4B5563] hover:text-[#2BFFF1] hover:border-[#2BFFF1]/20 transition-all text-xs font-semibold">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
@@ -441,7 +491,6 @@ export default function App() {
         {page==='settings' && <div className="overflow-y-auto h-full pb-16"><SettingsPage onNavigate={handleNavigate}/></div>}
         {page==='copy' && <div className="overflow-hidden h-full pb-16"><CopyTradePage/></div>}
         {page==='lab' && <div className="overflow-hidden h-full pb-16"><BotLabPage/></div>}
-        {/* NEW */}
         {page==='research' && <div className="overflow-hidden h-full pb-16"><BacktestPage/></div>}
         {page==='pump' && <div className="overflow-hidden h-full pb-16"><PumpPage/></div>}
         {page==='wallet' && <div className="overflow-hidden h-full pb-16"><WalletPage/></div>}
@@ -458,7 +507,6 @@ export default function App() {
         {page==='settings' && <div className="flex-1 overflow-y-auto"><SettingsPage onNavigate={handleNavigate}/></div>}
         {page==='copy' && <div className="flex-1 overflow-hidden"><CopyTradePage/></div>}
         {page==='lab' && <div className="flex-1 overflow-hidden"><BotLabPage/></div>}
-        {/* NEW */}
         {page==='research' && <div className="flex-1 overflow-hidden"><BacktestPage/></div>}
         {page==='pump' && <div className="flex-1 overflow-hidden"><PumpPage/></div>}
         {page==='wallet' && <div className="flex-1 overflow-y-auto"><WalletPage/></div>}
@@ -474,7 +522,7 @@ export default function App() {
             {grassActive && <TouchGrassActive onDeactivate={tgDeactivate}/>}
             <div className="grid grid-cols-[240px_1fr_260px] gap-3 flex-1 min-h-0">
               <div className="flex flex-col gap-3 overflow-hidden"><div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] flex-1 overflow-hidden p-3"><PositionsTable livePrice={livePrice}/></div></div>
-              <div className="flex flex-col gap-3 min-w-0 overflow-hidden"><div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-3 flex-1 min-h-0"><div className="flex items-center justify-between mb-2"><span className="text-xs font-semibold text-[#A7B0B7]">{asset.label} — {interval}</span>{loading && <div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>}</div><div style={{height:'calc(100% - 28px)'}}><PriceChart candles={candles} livePrice={livePrice} positions={positions} onQuickTP={(p:number) => setQuickTP(p)} onQuickSL={(p:number) => setQuickSL(p)} theme={chartTheme} onOpenSettings={() => setShowChartSettings(true)} onPlaceOrder={(_s,tp,sl) => { if(tp!=null) setQuickTP(tp); if(sl!=null) setQuickSL(sl); setRightTab('trade'); }}/></div></div></div>
+              <div className="flex flex-col gap-3 min-w-0 overflow-hidden"><div className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-3 flex-1 min-h-0"><div className="flex items-center justify-between mb-2"><span className="text-xs font-semibold text-[#A7B0B7]">{asset.label} — {interval}</span>{loading && <div className="w-3 h-3 border border-[#2BFFF1]/30 border-t-[#2BFFF1] rounded-full animate-spin"/>}</div><div style={{height:'calc(100% - 28px)'}}><PriceChart candles={candles} livePrice={livePrice} positions={openPositions} onQuickTP={(p:number) => setQuickTP(p)} onQuickSL={(p:number) => setQuickSL(p)} theme={chartTheme} onOpenSettings={() => setShowChartSettings(true)} onPlaceOrder={(_s,tp,sl) => { if(tp!=null) setQuickTP(tp); if(sl!=null) setQuickSL(sl); setRightTab('trade'); }}/></div></div></div>
               <div className="flex flex-col gap-3 overflow-y-auto">
                 <div className="flex rounded-xl border border-white/[0.07] overflow-hidden flex-shrink-0">{([['trade','Trade'],['bots','Bots'],['board','Rankings']] as const).map(([t,l]) => <button key={t} onClick={() => setRightTab(t as any)} className={`flex-1 py-2 text-[10px] font-semibold ${rightTab===t?'bg-[#2BFFF1]/15 text-[#2BFFF1]':'text-[#4B5563]'}`}>{l}</button>)}</div>
                 {rightTab==='trade' && <><TradeForm livePrice={livePrice} asset={asset.label} chartTP={quickTP} chartSL={quickSL} onClearChartTPSL={() => { setQuickTP(null); setQuickSL(null); }}/><IndicatorsPanel prices={prices}/><BuySellPressure candles={candles} livePrice={livePrice} asset={asset.label} assetId={assetId}/><div className="flex-1 overflow-hidden min-h-0"><ActivityLog/></div></>}
