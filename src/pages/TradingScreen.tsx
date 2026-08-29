@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CandlestickSeries, HistogramSeries, createChart,
-  type IChartApi, type ISeriesApi, type UTCTimestamp,
+  type IChartApi, type ISeriesApi,
 } from 'lightweight-charts';
 import {
   sanitizeCandles, toCandlestickData, toVolumeData,
   type Candle, type RawCandle,
 } from '../lib/candles';
+import { Stat, fmtPct, fmtPrice, fmtUsd, num, surface, t } from '../ui';
 
 // ── Xenia — Trading screen ─────────────────────────────────────────────────
 //
@@ -97,50 +98,6 @@ export interface TradingScreenProps {
 }
 
 const TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '1h', '4h', '1d'];
-
-// Terminals show more significant figures on cheap tokens, not fewer. A memecoin
-// at $0.000002998 is four decimals of noise in a generic formatter.
-function px(v: number): string {
-  if (!Number.isFinite(v)) return '—';
-  if (v === 0) return '0';
-  const a = Math.abs(v);
-  if (a >= 1000) return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  if (a >= 1) return v.toFixed(4);
-  if (a >= 0.01) return v.toFixed(5);
-  if (a >= 0.0001) return v.toFixed(7);
-  return v.toPrecision(4);
-}
-
-function usd(v: number): string {
-  if (!Number.isFinite(v)) return '—';
-  const a = Math.abs(v);
-  if (a >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
-  if (a >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
-  if (a >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
-  return `$${v.toFixed(2)}`;
-}
-
-const pct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
-
-// ── atoms ──────────────────────────────────────────────────────────────────
-
-const num = 'font-mono tabular-nums tracking-tight';
-const panel = 'bg-[#0D1117] border border-white/[0.06] rounded-lg';
-const eyebrow = 'text-[9px] uppercase tracking-[0.14em] text-[#4B5563] font-semibold';
-
-function Stat({ label, value, tone }: {
-  label: string; value: string; tone?: 'up' | 'down' | 'accent';
-}) {
-  const color = tone === 'up' ? 'text-[#10B981]'
-    : tone === 'down' ? 'text-[#EF4444]'
-    : tone === 'accent' ? 'text-[#2BFFF1]' : 'text-[#E5E9EF]';
-  return (
-    <div className="flex flex-col gap-[1px] min-w-0">
-      <span className={eyebrow}>{label}</span>
-      <span className={`${num} text-[11px] font-semibold ${color} truncate`}>{value}</span>
-    </div>
-  );
-}
 
 // ── chart ──────────────────────────────────────────────────────────────────
 
@@ -282,7 +239,7 @@ export default function TradingScreen(props: TradingScreenProps) {
         <div className="flex items-baseline gap-2">
           <span className="text-[15px] font-black tracking-tight">{market.symbol}</span>
           <span className="text-[10px] text-[#4B5563] truncate flex-1">{market.name}</span>
-          <span className={`${eyebrow} px-1.5 py-0.5 rounded border ${
+          <span className={`${t.label} px-1.5 py-0.5 rounded border ${
             mode === 'live'
               ? 'text-[#EF4444] border-[#EF4444]/30 bg-[#EF4444]/10'
               : 'text-[#4B5563] border-white/[0.08]'}`}>
@@ -291,17 +248,17 @@ export default function TradingScreen(props: TradingScreenProps) {
         </div>
         <div className="flex items-baseline gap-2 mt-0.5">
           <span className={`${num} text-[26px] font-bold leading-none ${up ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
-            {px(market.price)}
+            {fmtPrice(market.price)}
           </span>
           <span className={`${num} text-[12px] font-semibold ${up ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
-            {pct(market.change24hPct)}
+            {fmtPct(market.change24hPct)}
           </span>
         </div>
         <div className="grid grid-cols-4 gap-2 mt-1.5">
-          <Stat label="24h high" value={px(market.high24h)} />
-          <Stat label="24h low" value={px(market.low24h)} />
-          <Stat label="Volume" value={usd(market.volume24hUsd)} />
-          <Stat label="Liquidity" value={market.liquidityUsd ? usd(market.liquidityUsd) : '—'} />
+          <Stat label="24h high" value={fmtPrice(market.high24h)} />
+          <Stat label="24h low" value={fmtPrice(market.low24h)} />
+          <Stat label="Volume" value={fmtUsd(market.volume24hUsd)} />
+          <Stat label="Liquidity" value={market.liquidityUsd ? fmtUsd(market.liquidityUsd) : '—'} />
         </div>
       </div>
 
@@ -329,13 +286,13 @@ export default function TradingScreen(props: TradingScreenProps) {
       <div className="relative shrink-0" style={{ height: chartH }}>
         {loading ? (
           <div className="absolute inset-0 grid place-items-center">
-            <span className={eyebrow}>Loading {market.symbol}</span>
+            <span className={t.label}>Loading {market.symbol}</span>
           </div>
         ) : report.fatal ? (
           <div className="absolute inset-0 grid place-items-center px-8 text-center">
             <div>
               <p className="text-[11px] text-[#9CA3AF] leading-relaxed">{report.fatal}</p>
-              <p className={`${eyebrow} mt-1.5`}>Try another timeframe</p>
+              <p className={`${t.label} mt-1.5`}>Try another timeframe</p>
             </div>
           </div>
         ) : (
@@ -369,26 +326,26 @@ export default function TradingScreen(props: TradingScreenProps) {
                 className="mt-1.5 text-[11px] font-bold text-[#2BFFF1]">Open one</button>
             </div>
           ) : openHere.map(p => (
-            <div key={p.id} className={`${panel} p-2.5`}>
+            <div key={p.id} className={`${surface.panel} p-2.5`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
-                  <span className={`${eyebrow} px-1.5 py-0.5 rounded ${
+                  <span className={`${t.label} px-1.5 py-0.5 rounded ${
                     p.side === 'long'
                       ? 'text-[#10B981] bg-[#10B981]/10' : 'text-[#EF4444] bg-[#EF4444]/10'}`}>
                     {p.side} {p.leverage}×
                   </span>
-                  <span className={`${num} text-[11px] text-[#9CA3AF]`}>{usd(p.notionalUsd)}</span>
+                  <span className={`${num} text-[11px] text-[#9CA3AF]`}>{fmtUsd(p.notionalUsd)}</span>
                 </div>
                 <span className={`${num} text-[13px] font-bold ${
                   p.unrealisedUsd >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
-                  {p.unrealisedUsd >= 0 ? '+' : ''}{usd(p.unrealisedUsd)}
+                  {p.unrealisedUsd >= 0 ? '+' : ''}{fmtUsd(p.unrealisedUsd)}
                 </span>
               </div>
               <div className="grid grid-cols-4 gap-2 mt-2">
-                <Stat label="Entry" value={px(p.entry)} />
-                <Stat label="Stop" value={p.stop ? px(p.stop) : 'None'} />
-                <Stat label="Target" value={p.target ? px(p.target) : 'None'} />
-                <Stat label="Liq." value={p.liquidation ? px(p.liquidation) : '—'} tone="down" />
+                <Stat label="Entry" value={fmtPrice(p.entry)} />
+                <Stat label="Stop" value={p.stop ? fmtPrice(p.stop) : 'None'} />
+                <Stat label="Target" value={p.target ? fmtPrice(p.target) : 'None'} />
+                <Stat label="Liq." value={p.liquidation ? fmtPrice(p.liquidation) : '—'} tone="down" />
               </div>
               {onClosePosition && (
                 <button onClick={() => onClosePosition(p.id)}
@@ -420,13 +377,13 @@ export default function TradingScreen(props: TradingScreenProps) {
               ))}
             </div>
 
-            <div className={`${panel} p-2.5 space-y-2.5`}>
+            <div className={`${surface.panel} p-2.5 space-y-2.5`}>
               <div>
                 <div className="flex items-baseline justify-between mb-1">
-                  <span className={eyebrow}>Margin</span>
+                  <span className={t.label}>Margin</span>
                   <button onClick={() => setMarginStr(String(Math.floor(balanceUsd)))}
                     className={`${num} text-[10px] text-[#2BFFF1]`}>
-                    {usd(balanceUsd)} free
+                    {fmtUsd(balanceUsd)} free
                   </button>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -450,7 +407,7 @@ export default function TradingScreen(props: TradingScreenProps) {
 
               <div>
                 <div className="flex items-baseline justify-between mb-1">
-                  <span className={eyebrow}>Leverage</span>
+                  <span className={t.label}>Leverage</span>
                   <span className={`${num} text-[12px] font-bold text-[#2BFFF1]`}>{leverage}×</span>
                 </div>
                 <input
@@ -462,7 +419,7 @@ export default function TradingScreen(props: TradingScreenProps) {
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <span className={eyebrow}>Stop distance</span>
+                  <span className={t.label}>Stop distance</span>
                   <div className="flex items-center gap-1 mt-0.5">
                     <input
                       type="range" min={0.5} max={20} step={0.5} value={stopPct}
@@ -473,7 +430,7 @@ export default function TradingScreen(props: TradingScreenProps) {
                   </div>
                 </div>
                 <div>
-                  <span className={eyebrow}>Target</span>
+                  <span className={t.label}>Target</span>
                   <div className="flex items-center gap-1 mt-0.5">
                     <input
                       type="range" min={0.5} max={6} step={0.25} value={targetR}
@@ -487,18 +444,18 @@ export default function TradingScreen(props: TradingScreenProps) {
             </div>
 
             {/* ── the signature: what this trade actually costs ── */}
-            <div className={`${panel} p-2.5`}>
+            <div className={`${surface.panel} p-2.5`}>
               <div className="grid grid-cols-4 gap-2">
-                <Stat label="Notional" value={usd(notional)} />
-                <Stat label="Stop" value={px(stopPrice)} />
-                <Stat label="Target" value={px(targetPrice)} />
-                <Stat label="Liquidation" value={px(liqPrice)} tone="down" />
+                <Stat label="Notional" value={fmtUsd(notional)} />
+                <Stat label="Stop" value={fmtPrice(stopPrice)} />
+                <Stat label="Target" value={fmtPrice(targetPrice)} />
+                <Stat label="Liquidation" value={fmtPrice(liqPrice)} tone="down" />
               </div>
 
               <div className="h-px bg-white/[0.06] my-2" />
 
               <div className="flex items-baseline justify-between">
-                <span className={eyebrow}>Round trip costs</span>
+                <span className={t.label}>Round trip costs</span>
                 <span className={`${num} text-[13px] font-bold ${costTone}`}>
                   {costInR.toFixed(2)}R
                 </span>
@@ -514,7 +471,7 @@ export default function TradingScreen(props: TradingScreenProps) {
                 />
               </div>
               <p className="text-[10px] text-[#6B7280] leading-snug mt-1.5">
-                {usd(costUsd)} of your {usd(riskUsd)} risk goes to fees and slippage.
+                {fmtUsd(costUsd)} of your {fmtUsd(riskUsd)} risk goes to fees and slippage.
                 At a 50% hit rate you need better than{' '}
                 <span className={`${num} font-semibold text-[#9CA3AF]`}>{breakevenRR.toFixed(2)}R</span>{' '}
                 to break even.
@@ -545,7 +502,7 @@ export default function TradingScreen(props: TradingScreenProps) {
 
             {margin > balanceUsd && (
               <p className="text-[10px] text-[#EF4444] text-center">
-                {usd(margin)} exceeds your {usd(balanceUsd)} free collateral.
+                {fmtUsd(margin)} exceeds your {fmtUsd(balanceUsd)} free collateral.
               </p>
             )}
           </>
