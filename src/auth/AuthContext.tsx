@@ -56,11 +56,9 @@ const Ctx = createContext<AuthCtx | null>(null);
 export function useAuth() { const c = useContext(Ctx); if (!c) throw new Error('useAuth must be inside AuthProvider'); return c; }
 
 function useDebounce(fn: (...args: any[]) => void, ms: number) {
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   return useCallback((...args: any[]) => { clearTimeout(timer.current); timer.current = setTimeout(() => fn(...args), ms); }, [fn, ms]);
 }
-
-const PLATFORM_SOL_ADDRESS = '53NooDTuHXiiCesVgn87rZ76hRYa2GZj4gepSAPRxbAX';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
